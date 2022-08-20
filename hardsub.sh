@@ -21,7 +21,7 @@ if false ; then
       else
         echo -n '.' ;
         /bin/cp -p "${yy}" "/run/media/${USER}/2TBBlue3/MVs/${yy}" ;
-        echo -n ". $(tput bold; tput setaf 3)COPY" ;
+        echo -n ". $(tput bold; tput blink; tput setaf 3)COPY" ;
       fi ;
       tput sgr0 ; echo ;
     done
@@ -30,6 +30,15 @@ fi
 
 ###############################################################################
 # NOTE + TODO:
+# - Is this what's happening to the older videos?
+#   https://forum.videohelp.com/threads/397242-FFMPEG-Interlaced-MPEG2-video-to-x264-Issue
+#
+#  > I've tried what poisondeathray suggested! And it works!  It gives me the
+#    impression it lost or it loses a a little bit of quality compared to the
+#    result I got when I used only (-c: v libx264 -crf) without
+#    "-flags +ilme+ildct -x264opts tff=1" which the quality was exactly than
+#    original. However using "-flags +ilme+ildct -x264opts tff=1" the quality
+#    is totally acceptable.
 # - option to copy the audio track instead of re-encoding it as MP3
 # - option to copy the video track instead of re-encoding it, or re-encode
 #   the video track as something different.  For some reason, some re-encodes
@@ -159,8 +168,8 @@ trap 'exit_handler' EXIT ;
 #                 No special advanced bash features are intentionally used in
 #                 this script (except for array append, but that 1st appeared
 #                 in 3.1x or thereabouts).  This script uses bash-5.1.0.
-#  - exiftool   - not used in this script, but mentioned if you want to view
-#                 the video's metadata (either before/after the re-encoding).
+#  - exiftool   - used in this script to get/copy metadata from the source
+#                 video to the re-encoded video.
 #                 exiftool is a perl script, so (obviously) perl needs to be
 #                 installed along with any additional supporting libraries.
 #
@@ -205,8 +214,11 @@ G_OPTION_DEBUG='' ;             # set to 'y' if '--debug' is specified to
                                 # preserve some temporary files, etc.
 G_OPTION_NO_METADATA='' ;       # Do NOT add any metadata in the re-encoding
                                 # process.  This script typically adds: title,
-                                # genre, and comment metadata fields to the
-                                # video.
+                                # artist, genre, and comment metadata fields
+                                # to the video.
+G_OPTION_TITLE='' ;
+G_OPTION_ARTIST='' ;
+G_OPTION_GENRE='' ;
 
 C_VIDEO_OUT_DIR='OUT DIR' ;     # the re-encoded video's save location
 C_SUBTITLE_IN_DIR='IN SUBs' ;   # location for manually added subtitles
@@ -216,10 +228,13 @@ declare -a SED_SCRIPT_ARRAY=();
   #############################################################################
   # We'll encode the input video using a MP4 container.  According to
   # https://write.corbpie.com/adding-metadata-to-a-video-or-audio-file-with-ffmpeg/
+  # (also https://kodi.wiki/view/Video_file_tagging)
   # the following metadata tags are supported in the MP4 container format:
   #   “title”, “author”, “album_artist”, “album”, “grouping”, “composer”,
   #   “year”, “track”, “comment”, “genre”, “copyright”, “description”,
   #   “synopsis”, “show”, “episode_id”, “network”, and “lyrics”.
+  # ADDITIONALLY (from kodi.wiki) “artist”.
+  #
   # It was straightforward to automate “title” and “genre” in this script, but
   # other tags could be added through some clever scripting automation as well.
   #
@@ -239,10 +254,16 @@ declare -a SED_SCRIPT_ARRAY=();
   # (e.g. an old TV), so any metadata is probably limited to simple tags,
   # if at all.
   #############################################################################
+  # Metadata is kinda tricky and depends on the source container format.
+  # ffmpeg seems to/will copy any metadata from the source video that is not
+  # overridden by an explicient '-metadata tag=...' on the command line.
+  # Also, there doesn't seem to be a way to easily remove all metadata from
+  # a video during the re-encoding process.
   #
 G_METADATA_TITLE='' ;            # '-metadata title=' the video's filename
                                  # If it's = '', we'll build it from the
                                  # filename and clean it up a bit ...
+C_METADATA_ARTIST='' ;           # Artist ...
 C_METADATA_GENRE='Music Video' ; # '-metadata genre=' tag default for the video
 C_METADATA_COMMENT='' ;          # Search for this to modify what is included
                                  # when the default comment is built.  The
@@ -413,6 +434,7 @@ fi
 ###############################################################################
 #
 get_video_title() {
+  local in_filename="$1" ; shift ; # TODO, see if there's a title in the file
   local in_title="$1" ; shift ;
   local in_video_basename="$1" ; shift ;
 
@@ -1013,6 +1035,7 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
     #          this way, but there are the odd videos (usually older encodes)
     #          where the first subtitle is not the preferred subtitle to use for
     #          the video's re-encoding.
+    # 2 'subtitles' 'S_TEXT/UTF8' null 'eng'
     #
     # We use ‘mkvmerge’ and ‘jq’ to parse out the video's track IDs.  The status
     # of the ‘grep’ at the end of the pipeline will tell if there is a subtitle.
@@ -1065,35 +1088,67 @@ fi  # }
 
 
 ###############################################################################
-# Welcome to the wonderful world of shell escape!  Pretty sure no personal
+# HERE-HERE
+###############################################################################
+#             -metadata "title=${G_METADATA_TITLE}" \
+#             -metadata "genre=${C_METADATA_GENRE}" \
+#             -metadata "comment=${C_VIDEO_COMMENT}" \
+# ' = \x27
+#               | ${SED} -e 's#\([][ :,()\x27]\)#\\\\\\\\\\\\\1#g' ;
+#               | ${SED} -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g' ; # NO COMMA
+# G_OPTION_TITLE='' ;
+# G_OPTION_ARTIST='' ;
+# G_OPTION_GENRE='' ;
+#
+FFMPEG_METADATA='' ;
+if [ "${G_OPTION_NO_METADATA}" = '' ] ; then  # {
+# FFMPEG_METADATA=" '-metadata' 'genre=${C_METADATA_GENRE}'" ;
+  echo ;
+  if [ "${G_OPTION_TITLE}" = '' ] ; then
+  G_METADATA_TITLE="$(get_video_title "${G_IN_FILE}" "${G_METADATA_TITLE}" "${G_IN_BASENAME}")" ;
+  FFMPEG_METADATA=" '-metadata' 'title=${G_METADATA_TITLE}'" ;
+  fi
+  if [ "${G_OPTION_GENRE}" = '' ] ; then
+  FFMPEG_METADATA="${FFMPEG_METADATA} '-metadata' 'genre=${C_METADATA_GENRE}'" ;
+  fi
+fi  # }
+
+
+###############################################################################
+# Welcome to the wonderful world of shell escapes!  Pretty sure no personal
 # info will be added to the video's comments, and you can easily verify that
-# the comment is what you expected using VLC's Tools => Media Information.
+# the comment is what you expected using VLC's Tools => Media Information or
+# exiftool (which is cross-platform, but requires perl to be installed).
 #
 # There might be a cleaner/cleverer way to do this, but darn if I know how to!
 #
+# NOTE :: All/any of the metadata ffmpeg options are appended to the end and
+#         we make special use of that to strip them from the comment metadata
+#         since we want to use that mainly for ffmpeg encoding options and NOT
+#         data that is easily viewable with other tools.
+#
 if [ "${G_SUBTITLE_PATHNAME}" = '' ] ; then  # {
   if [ "${C_VIDEO_FILTERS}" = '' ] ; then
-    eval set -- ; # Make an EMPTY eval just to keep the code simple ...
+    eval set -- ; # Build an EMPTY eval just to keep the code simple ...
   else
     C_FFMPEG_VIDEO_FILTERS="`echo "${C_VIDEO_FILTERS}" \
-                           | ${SED} -e 's#\([ :()[]\)#\\\\\\\\\\\\\1#g' \
-                                  -e 's#]#\\\\\\\\\\\\\]#g'`" ;
-    eval set -- "'-vf' ${C_FFMPEG_VIDEO_FILTERS}" ;
+                | ${SED} -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
+                  # NOTE absence of ',' after the ':'
+    eval set -- "'-vf' ${C_FFMPEG_VIDEO_FILTERS}${FFMPEG_METADATA}" ;
   fi
 else
   G_FFMPEG_SUBTITLE_FILENAME="`echo "${G_SUBTITLE_PATHNAME}" \
-                             | ${SED} -e 's#\([ :,()[]\)#\\\\\\\\\\\\\1#g' \
-                                    -e 's#]#\\\\\\\\\\\\\]#g'`" ;
+                | ${SED} -e 's#\([][ :,()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
   G_FFMPEG_FONTS_DIR="`echo "${C_FONTS_DIR}" \
-                     | ${SED} -e 's#\([ :,()[]\)#\\\\\\\\\\\\\1#g' \
-                            -e 's#]#\\\\\\\\\\\\\]#g'`" ;
+                | ${SED} -e 's#\([][ :,()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
+
   if [ "${C_VIDEO_FILTERS}" = '' ] ; then
-    eval set -- "'-vf' subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}" ;
+    eval set -- "'-vf' subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}${FFMPEG_METADATA}" ;
   else
     C_FFMPEG_VIDEO_FILTERS="`echo "${C_VIDEO_FILTERS}" \
-                           | ${SED} -e 's#\([ :()[]\)#\\\\\\\\\\\\\1#g' \
-                                  -e 's#]#\\\\\\\\\\\\\]#g'`" ;
-    eval set -- "'-vf' ${C_FFMPEG_VIDEO_FILTERS},subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}" ;
+                | ${SED} -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
+                  # NOTE absence of ',' after the ':'
+    eval set -- "'-vf' ${C_FFMPEG_VIDEO_FILTERS},subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}${FFMPEG_METADATA}" ;
   fi
 fi  # }
 
@@ -1102,7 +1157,7 @@ fi  # }
 #
 if [ ! -s "${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then  # {
 
-  G_METADATA_TITLE="$(get_video_title "${G_METADATA_TITLE}" "${G_IN_BASENAME}")" ;
+  G_METADATA_TITLE="$(get_video_title "${G_IN_FILE}" "${G_METADATA_TITLE}" "${G_IN_BASENAME}")" ;
 
   #############################################################################
   # If the comment isn't set, then build a default comment.
@@ -1112,7 +1167,7 @@ if [ ! -s "${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then  
     C_VIDEO_COMMENT="`cat <<HERE_DOC
 Encoded on $(date)
 $(uname -sr ; ffmpeg -version | egrep '^ffmpeg ')
-${FFMPEG} -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K -c:v libx264 -preset ${C_FFMPEG_PRESET} -crf ${C_FFMPEG_CRF} -tune film -profile:v high -level 4.1 -pix_fmt yuv420p $(echo $@ | ${SED} -e 's/[\\]//g' -e "s#${HOME}#\\\${HOME}#g") '${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}'
+${FFMPEG} -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K -c:v libx264 -preset ${C_FFMPEG_PRESET} -crf ${C_FFMPEG_CRF} -tune film -profile:v high -level 4.1 -pix_fmt yuv420p $(echo $@ | ${SED} -e 's/[\\]//g' -e "s#${HOME}#\\\${HOME}#g" -e 's/ -metadata .*//') '${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}'
 HERE_DOC
 `" ;
   else  # }{
@@ -1139,11 +1194,12 @@ HERE_DOC
               -crf ${C_FFMPEG_CRF} \
               -tune film -profile:v high -level 4.1 -pix_fmt yuv420p \
               "$@" \
-              -metadata "title=${G_METADATA_TITLE}" \
-              -metadata "genre=${C_METADATA_GENRE}" \
               -metadata "comment=${C_VIDEO_COMMENT}" \
               "file:${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ;
     { RC=$? ; set +x ; } >/dev/null 2>&1
+###--         -metadata "title=${G_METADATA_TITLE}" \
+###--         -metadata "genre=${C_METADATA_GENRE}" \
+###--         -metadata "comment=${C_VIDEO_COMMENT}" \
   fi  # }
 
 else  # }{
