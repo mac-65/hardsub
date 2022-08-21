@@ -1103,7 +1103,6 @@ fi  # }
 FFMPEG_METADATA='' ;
 if [ "${G_OPTION_NO_METADATA}" = '' ] ; then  # {
 # FFMPEG_METADATA=" '-metadata' 'genre=${C_METADATA_GENRE}'" ;
-  echo ;
   if [ "${G_OPTION_TITLE}" = '' ] ; then
   G_METADATA_TITLE="$(get_video_title "${G_IN_FILE}" "${G_METADATA_TITLE}" "${G_IN_BASENAME}")" ;
   FFMPEG_METADATA=" '-metadata' 'title=${G_METADATA_TITLE}'" ;
@@ -1111,6 +1110,24 @@ if [ "${G_OPTION_NO_METADATA}" = '' ] ; then  # {
   if [ "${G_OPTION_GENRE}" = '' ] ; then
   FFMPEG_METADATA="${FFMPEG_METADATA} '-metadata' 'genre=${C_METADATA_GENRE}'" ;
   fi
+
+  #############################################################################
+  # If the comment isn't set, then build a default comment.
+  #
+  C_VIDEO_COMMENT='' ;
+  if [ "${C_METADATA_COMMENT}" = '' ] ; then  # {
+    C_VIDEO_COMMENT="`cat <<HERE_DOC | ${SED} -e 's#\([][ :,()\x27]\)#\\\\\\\\\\\\\1#g'
+Encoded on $(date)
+$(uname -sr ; ffmpeg -version | egrep '^ffmpeg ')
+${FFMPEG} -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K -c:v libx264 -preset ${C_FFMPEG_PRESET} -crf ${C_FFMPEG_CRF} -tune film -profile:v high -level 4.1 -pix_fmt yuv420p $(echo $@ | ${SED} -e 's/[\\]//g' -e "s#${HOME}#\\\${HOME}#g" -e 's/ -metadata .*//') '${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}'
+HERE_DOC
+`" ;
+#-del             -metadata "comment=${C_VIDEO_COMMENT}" \
+  FFMPEG_METADATA="${FFMPEG_METADATA} '-metadata' 'comment=${C_VIDEO_COMMENT}'" ;
+  else  # }{
+    echo 'FIXME' ;
+  fi  # }
+
 fi  # }
 
 
@@ -1136,20 +1153,20 @@ if [ "${G_SUBTITLE_PATHNAME}" = '' ] ; then  # {
                   # NOTE absence of ',' after the ':'
     eval set -- "'-vf' ${C_FFMPEG_VIDEO_FILTERS}${FFMPEG_METADATA}" ;
   fi
-else
+else  # }{
   G_FFMPEG_SUBTITLE_FILENAME="`echo "${G_SUBTITLE_PATHNAME}" \
                 | ${SED} -e 's#\([][ :,()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
   G_FFMPEG_FONTS_DIR="`echo "${C_FONTS_DIR}" \
                 | ${SED} -e 's#\([][ :,()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
 
-  if [ "${C_VIDEO_FILTERS}" = '' ] ; then
+  if [ "${C_VIDEO_FILTERS}" = '' ] ; then  # {
     eval set -- "'-vf' subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}${FFMPEG_METADATA}" ;
-  else
+  else  # }{
     C_FFMPEG_VIDEO_FILTERS="`echo "${C_VIDEO_FILTERS}" \
                 | ${SED} -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
                   # NOTE absence of ',' after the ':'
     eval set -- "'-vf' ${C_FFMPEG_VIDEO_FILTERS},subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}${FFMPEG_METADATA}" ;
-  fi
+  fi  # }
 fi  # }
 
 
@@ -1157,22 +1174,7 @@ fi  # }
 #
 if [ ! -s "${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then  # {
 
-  G_METADATA_TITLE="$(get_video_title "${G_IN_FILE}" "${G_METADATA_TITLE}" "${G_IN_BASENAME}")" ;
-
-  #############################################################################
-  # If the comment isn't set, then build a default comment.
-  #
-  C_VIDEO_COMMENT='' ;
-  if [ "${C_METADATA_COMMENT}" = '' ] ; then  # {
-    C_VIDEO_COMMENT="`cat <<HERE_DOC
-Encoded on $(date)
-$(uname -sr ; ffmpeg -version | egrep '^ffmpeg ')
-${FFMPEG} -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K -c:v libx264 -preset ${C_FFMPEG_PRESET} -crf ${C_FFMPEG_CRF} -tune film -profile:v high -level 4.1 -pix_fmt yuv420p $(echo $@ | ${SED} -e 's/[\\]//g' -e "s#${HOME}#\\\${HOME}#g" -e 's/ -metadata .*//') '${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}'
-HERE_DOC
-`" ;
-  else  # }{
-    echo 'FIXME' ;
-  fi  # }
+#-del  G_METADATA_TITLE="$(get_video_title "${G_IN_FILE}" "${G_METADATA_TITLE}" "${G_IN_BASENAME}")" ;
 
   #         -metadata "comment=${C_VIDEO_COMMENT}" \
   RC=0 ;
@@ -1194,7 +1196,6 @@ HERE_DOC
               -crf ${C_FFMPEG_CRF} \
               -tune film -profile:v high -level 4.1 -pix_fmt yuv420p \
               "$@" \
-              -metadata "comment=${C_VIDEO_COMMENT}" \
               "file:${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ;
     { RC=$? ; set +x ; } >/dev/null 2>&1
 ###--         -metadata "title=${G_METADATA_TITLE}" \
