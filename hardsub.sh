@@ -733,7 +733,7 @@ apply_script_to_srt_subtitles() {  # input_pathname  output_pathname
 
   #############################################################################
   # Note, if you want to use '--regexp-extended' then some of the expressions
-  # need to be redone because of the syntax difference between the two modes.
+  # need to be reworked because of the syntax difference between the two modes.
   # It just might be simpler to include another sed script here instead.
   #
   echo -n 'DOS..'
