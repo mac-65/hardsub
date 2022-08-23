@@ -235,8 +235,8 @@ C_SCRIPT_NAME="$(basename "$0" '.sh')" ;
 # (e.g. my TV can't playback FLAC audio or h265 video streams).
 #
 C_FFMPEG_CRF=20 ;
-C_FFMPEG_PRESET='veryslow' ;    # Good quality w/good compression
 C_FFMPEG_PRESET='veryfast' ;    # Fast, used for batch script testing
+C_FFMPEG_PRESET='veryslow' ;    # Good quality w/good compression
 C_FFMPEG_MP3_BITS=320 ;         # We'll convert the audio track to MP3
 C_FFMPEG_PIXEL_FORMAT='yuvj420p' ; # If it don't work, back to 'yuv420p'.
 C_SUBTITLE_OUT_DIR='./SUBs' ;   # Where to save the extracted subtitle
