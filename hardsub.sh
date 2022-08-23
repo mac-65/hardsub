@@ -218,7 +218,7 @@ FFMPEG='ffmpeg -y -nostdin -hide_banner -loglevel info' ;
 MKVMERGE='/usr/bin/mkvmerge' ;
 MKVEXTRACT='/usr/bin/mkvextract' ;
 DOS2UNIX='/bin/dos2unix --force' ;
-GREP='/usr/bin/grep' ;
+GREP='/usr/bin/grep --text' ; # saves the embarrassing "binary file matches"
 AGREP='/usr/bin/agrep' ;
 AGREP_FUZZY=12 ; # This value is entirely arbitrary with a little testing
 SED='/usr/bin/sed' ;
@@ -921,7 +921,7 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
       # -- I ended up using '%%%' to represent the '\' character to simplify
       # the scripting.
       #
-    ${GREP} --text -q "${SED_SCRIPT_ARRAY[$idx]}" "${ASS_SRC}" ; RC=$? ;
+    ${GREP} -q "${SED_SCRIPT_ARRAY[$idx]}" "${ASS_SRC}" ; RC=$? ;
     if [ ${RC} -eq 0 ] ; then  # {
       echo -n "${ATTR_GREEN_BOLD}." ;
       (( ido = idx + 1 )) ;
