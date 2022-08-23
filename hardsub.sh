@@ -52,12 +52,36 @@ fi
 #                            nv12 nv16 nv21 yuv420p10le yuv422p10le yuv444p10le
 #                            nv20le gray gray10le
 #
+# - https://trac.ffmpeg.org/wiki/HowToBurnSubtitlesIntoVideo
+#   ffmpeg has 2 text-based subtitle filters: SubRip and Advanced Substation
+#   Alpha.  There is no timed text support (have to externally convert it to,
+#   say SRT and use that subtitle file if I want to support it).
+#   Timed text, I believe, is what U-tube uses for auto-translation, etc.
+###############################################################################
+#
 # https://askubuntu.com/questions/366103/saving-more-corsor-positions-with-tput-in-bash-terminal
 #   Interesting way to capture the cursor position.
 # https://unix.stackexchange.com/questions/88490/how-do-you-use-output-redirection-in-combination-with-here-documents-and-cat
 #
+# Can I use yuvj420p instead?
+# https://www.eoshd.com/comments/topic/20799-what-is-the-difference-between-yuvj420p-and-yuv420p/
+# "My understanding is yuv420p uses color values from 16-235 whereas yuvj420p
+#  uses color values from 0-255."
+# --> Maybe not...
+#     [swscaler @ 0x560320a39780] deprecated pixel format used, make sure you did set range correctly
+# > The ’net seems to say that this warning can be ignored.  What I don't know
+#   is if using 'yuvj420p' over 'yuv420p' makes a difference.  Will there be
+#   less banding in the shaded parts of a scene?
+#
+#
 # ls ; read MKV_FILE ; mkvmerge -i -F json "${MKV_FILE}" | jq '.container' | jq -r '[.properties.title]|@sh' ;
 # ls * | while read MKV_FILE ; do echo -n "${MKV_FILE} -> " ; mkvmerge -i -F json "${MKV_FILE}" | jq '.container' | jq -r '[.properties.title]|@sh' ; done
+#
+###############################################################################
+# TODO + FEATURES:
+#  - add --mono to downmix stereo to: mono (both channels), left or right only.
+#    This would be used for viewing a video and listening to the audio through
+#    an earpod using only one of the pods.
 #
 
 
@@ -190,7 +214,7 @@ MY_SCRIPT="`basename \"$0\"`" ;
 DBG='.' ;
 DBG='' ;
 FFMPEG='/usr/local/bin/ffmpeg -y -nostdin -hide_banner' ;
-FFMPEG='ffmpeg -y -nostdin -hide_banner' ;
+FFMPEG='ffmpeg -y -nostdin -hide_banner -loglevel info' ;
 MKVMERGE='/usr/bin/mkvmerge' ;
 MKVEXTRACT='/usr/bin/mkvextract' ;
 DOS2UNIX='/bin/dos2unix --force' ;
@@ -200,6 +224,7 @@ AGREP_FUZZY=12 ; # This value is entirely arbitrary with a little testing
 SED='/usr/bin/sed' ;
 CP='/usr/bin/cp' ;
 FOLD='/usr/bin/fold' ;
+HEAD='/usr/bin/head' ;
 EXIFTOOL='/usr/bin/exiftool' ;
 
 C_SCRIPT_NAME="$(basename "$0" '.sh')" ;
@@ -210,9 +235,10 @@ C_SCRIPT_NAME="$(basename "$0" '.sh')" ;
 # (e.g. my TV can't playback FLAC audio or h265 video streams).
 #
 C_FFMPEG_CRF=20 ;
-C_FFMPEG_PRESET='veryfast' ;    # Fast, used for batch script testing
 C_FFMPEG_PRESET='veryslow' ;    # Good quality w/good compression
+C_FFMPEG_PRESET='veryfast' ;    # Fast, used for batch script testing
 C_FFMPEG_MP3_BITS=320 ;         # We'll convert the audio track to MP3
+C_FFMPEG_PIXEL_FORMAT='yuvj420p' ; # If it don't work, back to 'yuv420p'.
 C_SUBTITLE_OUT_DIR='./SUBs' ;   # Where to save the extracted subtitle
 C_FONTS_DIR="${HOME}/.fonts" ;  # Where to save the font attachments
 
@@ -505,6 +531,18 @@ get_video_title() {
 #
 # NOTE -- NO FONT will ever be overwritten by this function.
 #
+# WISH :: Since we extracted the subtitle first, we could scan the subtitle
+#         file for all referenced fonts, then see if they exist in the video.
+#         This is probably way out-of-scope for this script for a couple of
+#         reasons:
+#       - it's very rare to have a missing font in the video file; and
+#       - it's non-trivial to see if the font's filename matches the font
+#         name in the subtitle file.  So, probably not gonna happen ...
+#
+# FIXME :: Theoretically, a video containing an SRT subtitle __could__ have an
+#          attached font.  We'll only use that info to NOT display the warning
+#          about 'no font attachments were found' below.
+#
 extract_font_attachments() {
 
   local in_video="$1" ; shift ;
@@ -540,16 +578,16 @@ extract_font_attachments() {
 
     if [ ! -f "${font_pathname}" ] ; then # {
       attachment_list="${attachment_list}${attachment_ID}:${font_pathname} " ;
-      MSG="`mkvextract attachments \"${in_video}\" \"${attachment_ID}:${font_pathname}\"`" ;
-      if [ $? -eq 0 ] ; then
+      MSG="`${MKVEXTRACT} attachments \"${in_video}\" \"${attachment_ID}:${font_pathname}\"`" ;
+      if [ $? -eq 0 ] ; then  # {
         echo    "${MSG}" \
           | ${SED} -e "s/.*is written to \(.*\).$/${pad_spaces}<< ${ATTR_BLUE_BOLD}EXTRACTING ${ATTR_CLR_BOLD}${attachment_ID}:${attachment_file}${ATTR_OFF} to ${ATTR_CYAN_BOLD}\1${ATTR_OFF}. >>/" \
           | ${SED} -e "s#${HOME}#\\\${HOME}#g" ;
-      else
+      else  # }{
         ERR_MKVMERGE=1;
         MSG="`echo -n \"${MSG}\" | tail -1 | cut -d' ' -f2-`" ;
         echo    "${ATTR_ERROR} ${MSG}" ;
-      fi
+      fi  # }
     else # }{
       echo -n "${pad_spaces}<< ${ATTR_YELLOW}SKIPPING ALREADY INSTALLED " ;
       echo    "${ATTR_MAGENTA}${attachment_ID}:${attachment_file}${ATTR_OFF}. >>" ;
@@ -588,7 +626,8 @@ extract_font_attachments() {
       # all or libass will perform a font substitution with lackluster results,
       # or the font is already installed on the system and is rendered fine).
       #
-      # So we'll warn the user of this situation.
+      # So we'll warn the user of this situation UNLESS it's an SRT subtitle
+      # in which case this is the expected condition (FIXME).
       #
     echo -n "${pad_spaces}${ATTR_YELLOW}${ATTR_BLINK}" ;
     echo    "NOTE, this video file contains no FONT attachments.${ATTR_OFF}" ;
@@ -1040,7 +1079,7 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
           "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass" \
           "${G_SUBTITLE_PATHNAME}" ;
     else  # }{ OKAY
-      vecho "${ATTR_YELLOW_BOLD}SRT SUBTITLE ALREADY PROCESSED$(tput sgr0) ..." ;
+      echo "${ATTR_YELLOW_BOLD}SRT SUBTITLE ALREADY PROCESSED$(tput sgr0) ..." ;
 
       G_SUBTITLE_PATHNAME="${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass"
     fi  # }
@@ -1071,7 +1110,6 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
     fi  # }
     tput sgr0 ;
 
-  else  # }{
     #############################################################################
     # Check to see if there are subtitles attached to this video.
     # FIXME :: Right now, we only handle ASS subtitles and assume the first one
@@ -1093,37 +1131,67 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
     # - 3 'subtitles' 'S_TEXT/ASS' 'English Translation - With Effect' 'eng'
     # - 3 'subtitles' 'S_TEXT/ASS' 'With Effect' 'eng'
     #   4 'subtitles' 'S_TEXT/ASS' 'Without Effect' 'eng'
+    #   2 'subtitles' 'S_TEXT/UTF8' null 'eng'
 
     # so let's see if there are any font
     # attachment(s) in the video.  If there are, then extract those fonts to
     # the fonts' directory (in 'C_FONTS_DIR') to provide visibility to ffmpeg.
     #
-    ###- original way ${MKVMERGE} -i "${G_IN_FILE}" | grep -iq 'substationalpha' ; RC=$? ;
 
+  else  # }{
     SUBTITLE_TRACK="$(${MKVMERGE} -i -F json "${G_IN_FILE}" \
         | jq '.tracks[]' \
         | jq -r '[.id, .type, .properties.codec_id, .properties.track_name, .properties.language]|@sh' \
-        | grep "'subtitles' 'S_TEXT/ASS'" \
-        | head -1 \
-        | grep "'subtitles' 'S_TEXT/ASS'")" ; RC=$? ;
-    echo "RC=$RC, '${SUBTITLE_TRACK}'" ;
+        | ${GREP} "'subtitles' 'S_TEXT/" \
+        | ${HEAD} -1 \
+        | ${GREP} "'subtitles' 'S_TEXT/")" ; RC=$? ;
 
     if [ ${RC} -eq 0 ] ; then  # { OKAY  HERE-HERE  YYYY
 
-      vecho "${ATTR_YELLOW_BOLD}  SUBSTATION ALPHA SUBTITLE FOUND IN VIDEO$(tput sgr0) ..." ;
+      if ( echo "${SUBTITLE_TRACK}" | ${GREP} -q "'subtitles' 'S_TEXT/ASS'" ) ; then  # {
+        echo "${ATTR_YELLOW_BOLD}  SUBSTATION ALPHA SUBTITLE FOUND IN VIDEO$(tput sgr0) ..." ;
 
-      extract_subtitle_track "${G_IN_FILE}" \
-          "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass" \
-          "${SUBTITLE_TRACK}" ;
+        extract_subtitle_track "${G_IN_FILE}" \
+            "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass" \
+            "${SUBTITLE_TRACK}" ;
 
-      G_SUBTITLE_PATHNAME="${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" ;
-      apply_script_to_ass_subtitles \
-          "${G_OPTION_NO_MODIFY_ASS}" \
-          "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass" \
-          "${G_SUBTITLE_PATHNAME}" \
-          "${G_OPTION_ASS_SCRIPT}" ;
+        G_SUBTITLE_PATHNAME="${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" ;
+        apply_script_to_ass_subtitles \
+            "${G_OPTION_NO_MODIFY_ASS}" \
+            "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass" \
+            "${G_SUBTITLE_PATHNAME}" \
+            "${G_OPTION_ASS_SCRIPT}" ;
 
-      extract_font_attachments "${G_IN_FILE}" "${C_FONTS_DIR}" ;
+        extract_font_attachments "${G_IN_FILE}" "${C_FONTS_DIR}" ;
+      elif ( echo "${SUBTITLE_TRACK}" | ${GREP} -q "'subtitles' 'S_TEXT/UTF8'" ) ; then  # }{
+        echo "${ATTR_CYAN_BOLD}  SUB-RIP SUBTITLE FOUND IN VIDEO$(tput sgr0) ..." ;
+        extract_subtitle_track "${G_IN_FILE}" \
+            "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" \
+            "${SUBTITLE_TRACK}" ;
+
+        ${FFMPEG} -i "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" \
+                     "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass" \
+            >/dev/null 2>&1 ; RC=$? ;
+        { set +x ; } >/dev/null 2>&1
+        if [ ${RC} -ne 0 ] ; then
+          echo -n "${ATTR_ERROR} ${FFMPEG} -i " ;
+          echo -n "'${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt' " ;
+          echo    "'${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass'" ;
+          exit 1 ;
+        fi
+
+        G_SUBTITLE_PATHNAME="${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass"
+        apply_script_to_srt_subtitles \
+            "${G_OPTION_NO_MODIFY_SRT}" \
+            "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass" \
+            "${G_SUBTITLE_PATHNAME}" ;
+      else  # }{
+        echo -n "${ATTR_YELLOW_BOLD}NOTICE${ATTR_OFF} $(tput bold)-- " ;
+        echo -n "skipping unknown/unsupported "
+        echo -n "$(tput setaf 5)S_TEXT$(tput sgr0; tput bold) "
+        echo    "subtitle type -- $(tput sgr0)" ;
+        echo    "      <<< '${ATTR_YELLOW}${SUBTITLE_TRACK}$(tput sgr0)' >>>" ;
+      fi  # }
     fi  # }
   fi  # }
 else  # }{
@@ -1204,13 +1272,12 @@ if [ "${G_OPTION_NO_METADATA}" = '' ] ; then  # {
   # NOTE -- this has to be done here because we need to evaluate "$@" to get
   #         the remaining ffmpeg options ...
   #
-  #
   G_VIDEO_COMMENT='' ;
   if [ "${C_METADATA_COMMENT}" = '' ] ; then  # {
     G_VIDEO_COMMENT="`cat <<HERE_DOC
 Encoded on $(date)
-$(uname -sr ; ffmpeg -version | egrep '^ffmpeg ')
-${FFMPEG} -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K -c:v libx264 -preset ${C_FFMPEG_PRESET} -crf ${C_FFMPEG_CRF} -tune film -profile:v high -level 4.1 -pix_fmt yuv420p $(echo $@ | ${SED} -e 's/[\\]//g' -e "s#${HOME}#\\\${HOME}#g" -e 's/ -metadata .*//')
+$(uname -sr ; ffmpeg -version | egrep '^ffmpeg ' | sed -e 's/version //' -e 's/ Copyright.*//')
+ffmpeg -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K -c:v libx264 -preset ${C_FFMPEG_PRESET} -crf ${C_FFMPEG_CRF} -tune film -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} $(echo $@ | ${SED} -e 's/[\\]//g' -e "s#${HOME}#\\\${HOME}#g" -e 's/ -metadata .*//')
 HERE_DOC
 `" ;
   else  # }{
@@ -1229,7 +1296,7 @@ if [ ! -s "${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then  
               -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K \
               -c:v libx264 -preset ${C_FFMPEG_PRESET} \
               -crf ${C_FFMPEG_CRF} \
-              -tune film -profile:v high -level 4.1 -pix_fmt yuv420p \
+              -tune film -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} \
               "$@" \
               "file:${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ;
     { RC=$? ; set +x ; } >/dev/null 2>&1
@@ -1239,7 +1306,7 @@ if [ ! -s "${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then  
               -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K \
               -c:v libx264 -preset ${C_FFMPEG_PRESET} \
               -crf ${C_FFMPEG_CRF} \
-              -tune film -profile:v high -level 4.1 -pix_fmt yuv420p \
+              -tune film -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} \
               "$@" \
               -metadata "comment=${G_VIDEO_COMMENT}" \
               "file:${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ;
