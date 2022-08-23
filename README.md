@@ -13,9 +13,11 @@ Also, it (as far as I know) can't play flac or anything above yuv420p for x264.
 
 ## Getting Started
 For now, until *real* help is written, just execute <code>./hardsub</code> to get a simple command line snippet to run --<br>
-<code>./hardsub.sh
+```
+./hardsub.sh
 USAGE ::
- ls *.flv *.avi *.mkv *.mp4 *.webm *.ts *.mpg *.vob 2>/dev/null | while read yy ; do ./hardsub.sh "${yy}" ; done</code>
+ ls *.flv *.avi *.mkv *.mp4 *.webm *.ts *.mpg *.vob 2>/dev/null | while read yy ; do ./hardsub.sh "${yy}" ; done
+```
 
 Some directories need to be built -- look through the script (for now) to see which ones.
 
