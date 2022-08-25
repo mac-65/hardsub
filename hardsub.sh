@@ -82,6 +82,8 @@ fi
 #  - add --mono to downmix stereo to: mono (both channels), left or right only.
 #    This would be used for viewing a video and listening to the audio through
 #    an earpod using only one of the pods.
+#  - https://www.youtube.com/watch?v=F0B7HDiY-10
+#    Convert these to burn-able subtitles; Korean at the TOP, ENG on bottom.
 #
 
 
@@ -220,7 +222,10 @@ MKVEXTRACT='/usr/bin/mkvextract' ;
 DOS2UNIX='/bin/dos2unix --force' ;
 GREP='/usr/bin/grep --text' ; # saves the embarrassing "binary file matches"
 AGREP='/usr/bin/agrep' ;
-AGREP_FUZZY=12 ; # This value is entirely arbitrary with a little testing
+AGREP_FUZZY_ERRORS=5 ; # This value is mostly arbitrary and arrived at by testing.
+                       # This is the number of 'agrep' "failures" we'll count to
+                       # determine if the Title in the video is unusable (garbage)
+                       # based on comparing it with the filename of the video.
 SED='/usr/bin/sed' ;
 CP='/usr/bin/cp' ;
 FOLD='/usr/bin/fold' ;
@@ -239,6 +244,7 @@ C_FFMPEG_PRESET='veryfast' ;    # Fast, used for batch script testing
 C_FFMPEG_PRESET='veryslow' ;    # Good quality w/good compression
 C_FFMPEG_MP3_BITS=320 ;         # We'll convert the audio track to MP3
 C_FFMPEG_PIXEL_FORMAT='yuvj420p' ; # If it don't work, back to 'yuv420p'.
+                                # https://news.ycombinator.com/item?id=20036710
 C_SUBTITLE_OUT_DIR='./SUBs' ;   # Where to save the extracted subtitle
 C_FONTS_DIR="${HOME}/.fonts" ;  # Where to save the font attachments
 
@@ -250,6 +256,8 @@ G_OPTION_NO_MODIFY_SRT='' ;     # for an SRT subtitle, don't apply any sed
                                 # ffmpeg's default conversion is pretty basic.
 G_OPTION_NO_MODIFY_ASS='' ;     # TODO write_me + getopt
 G_OPTION_ASS_SCRIPT=''    ;     # TODO write_me + getopt
+G_OPTION_NO_FUZZY='' ;          # if set to 'y', then do't use 'agrep' to test
+                                # the Title in the video file.
 G_OPTION_VERBOSE='' ;           # set to 'y' if '--verbose' is specified to
                                 # display a little bit more status of the run
 G_OPTION_DEBUG='' ;             # set to 'y' if '--debug' is specified to
@@ -258,6 +266,9 @@ G_OPTION_NO_METADATA='' ;       # Do NOT add any metadata in the re-encoding
                                 # process.  This script typically adds: title,
                                 # artist, genre, and comment metadata fields
                                 # to the video.
+                                # NOTE :: this implies '--no-comment'.
+G_OPTION_NO_COMMENT='' ;        # Do NOT write a '-metadata comment='.  Other
+                                # metadata will be written if appropriate.
 G_OPTION_TITLE='' ;
 G_OPTION_ARTIST='' ;
 G_OPTION_GENRE='' ;
@@ -393,7 +404,8 @@ HS_OPTIONS=`getopt -o h::vc:f:yt:q: \
 debug,\
 no-subs,\
 no-metadata,\
-no-modify-srt \
+no-modify-srt,\
+no-fuzzy \
     -n "${ATTR_ERROR} ${ATTR_BLUE_BOLD}${MY_SCRIPT}${ATTR_YELLOW}" -- "$@"` ;
 
 if [ $? != 0 ] ; then
@@ -422,6 +434,12 @@ while true ; do  # {
     ;;
   --no-metadata)
     G_OPTION_NO_METADATA='y' ; shift ;
+    ;;
+  --no-comment)
+    G_OPTION_NO_COMMENT='y' ; shift ;
+    ;;
+  --no-fuzzy)
+    G_OPTION_NO_FUZZY='y' ; shift ;
     ;;
   -v|--verbose)
     G_OPTION_VERBOSE='y' ; shift ;
@@ -502,13 +520,34 @@ get_video_title() {
       # The title is explicitly set by the user
     out_title="${in_title}" ;
 
-  elif [ "$(${EXIFTOOL} "${in_filename}" \
-                   | ${GREP} '^Title' \
-                   | sed -e 's/^.*: //')" = '' ] ; then  # }{
-      # No title in the video, so make one from the filename
-    out_title="$(echo "${in_video_basename}" \
+  else  # }{
+    local name_in_video="$(${EXIFTOOL} "${in_filename}" \
+                     | ${GREP} '^Title' \
+                     | sed -e 's/^.*: //')" ;
+    if [ "${name_in_video}" = '' ] ; then  # }{
+        #######################################################################
+        # There is no Title in the video, so make one from the filename.
+        # TODO :: use a simple rule-base algorithm to split the name into the
+        #         Artist and song Title if there's a hyphen in the filename.
+        #         If the split is successful, then cleanup the artist-title by
+        #         removing […]s everywhere & (…) from the front of the Artist.
+        #
+      out_title="$(echo "${in_video_basename}" \
                    | ${SED} -e 's/[_+]/ /g'  \
                    )" ;
+    elif [ "${G_OPTION_NO_FUZZY}" = '' ] ; then  # }{
+      local fuzzy_errors=0 ;
+      for fuzz in {1..12} ; do
+        echo "${in_filename}" \
+          | ${AGREP} -${fuzz} -k -i -q "${name_in_video}" ;
+          (( fuzzy_errors += $? )) ;
+      done
+      if [ ${fuzzy_errors} -gt ${AGREP_FUZZY_ERRORS} ] ; then  # {
+        out_title="$(echo "${in_video_basename}" \
+                     | ${SED} -e 's/[_+]/ /g'  \
+                     )" ;
+      fi  # }
+    fi  # }
   fi  # }
 
   ## 'title=The Byrd'"'"'s - Turn! Turn! Turn! (2nafish)'
@@ -547,8 +586,9 @@ extract_font_attachments() {
 
   local in_video="$1" ; shift ;
   local attachments_dir="$1" ; shift ; # save location for the font attachments
+  local ignore_no_attachments="$1" ; shift ; # no font attachments are OKAY
 
-  echo    "  ${ATTR_BOLD}GETTING FONTS FOR VIDEO " ;
+  echo    "  ${ATTR_BOLD}GETTING FONTS FOR VIDEO ..." ;
 
   local attachment_line='' ;
   local attachment_list='' ;
@@ -602,10 +642,11 @@ extract_font_attachments() {
         #######################################################################
         # - Note that this sctipt WILL NOT overwrite the font __file__ if it
         #   already exists in the 'attachments_dir'.
-        # - Adding fonts from some videos can sometimes mess with the
+        # - NOTE :: adding fonts from some videos can sometimes mess with the
         #   system-installed fonts if the 'attachments_dir' is locally visible
-        #   to the 'fontconfig' system installed on your computer (solution -
-        #   simply set 'attachments_dir' to something else).
+        #   to the 'fontconfig' system installed on your computer (solution --
+        #   simply set 'attachments_dir' to something else, maybe local to the
+        #   video to re-encode).
         #
         echo "${ATTR_YELLOW_BOLD}Adding new FONTs using '${HS_FC_CACHE}' ${ATTR_OFF}..." ;
         ${HS_FC_CACHE} "${attachments_dir}" ;
@@ -616,7 +657,7 @@ extract_font_attachments() {
       echo "${ATTR_YELLOW_BOLD}no NEW fonts found${ATTR_OFF}." ;
     fi # }
 
-  else  # }{
+  elif [ ${ignore_no_attachments} -eq 0 ] ; then  # }{
 
       #########################################################################
       # I have seen videos (although rare) that contain a subtitle track, but
@@ -627,10 +668,11 @@ extract_font_attachments() {
       # or the font is already installed on the system and is rendered fine).
       #
       # So we'll warn the user of this situation UNLESS it's an SRT subtitle
-      # in which case this is the expected condition (FIXME).
+      # in which case this is the expected condition.
       #
-    echo -n "${pad_spaces}${ATTR_YELLOW}${ATTR_BLINK}" ;
-    echo    "NOTE, this video file contains no FONT attachments.${ATTR_OFF}" ;
+    echo -n "${pad_spaces}${ATTR_YELLOW_BOLD}${ATTR_BLINK}" ;
+    echo -n "NOTE${ATTR_OFF}${ATTR_YELLOW}, " ;
+    echo    "this video file contains no FONT attachments.${ATTR_OFF}" ;
   fi # }
 }
 
@@ -664,13 +706,14 @@ extract_subtitle_track() {
 
 ###############################################################################
 ###############################################################################
-# SRT subtitles are always converted to ASS subtitles using ffmpeg.
+# SRT subtitles are always converted to ASS subtitles using ffmpeg as it
+# provides quite a bit of versatility.
 # This function provides a way to edit those subtitles, if desired.
 #
 # This applies some simple enhancements to the ASS script built by ffmpeg.
 # Usually SRT subtitles are kinda bland and this makes them a little better.
 #
-apply_script_to_srt_subtitles() {  # input_pathname  output_pathname
+apply_script_to_srt_subtitles() {
 
   local L_SKIP_OPTION="$1" ; shift ;
   local ASS_SRC="$1" ; shift ;
@@ -693,7 +736,7 @@ apply_script_to_srt_subtitles() {  # input_pathname  output_pathname
   # I've included a couple of commented out more complicated examples of what
   # can be done.
   #
-  # Because libass allows for and provides complex control over the subtitles, 
+  # Because libass allows for and provides complex control over the subtitles,
   # breaking up the sed command was the easiest way to manage all of the
   # complex shell escaping necessary for it to all work smoothly.  There are
   # quite a few special character collisions that have to be handled and I
@@ -740,47 +783,68 @@ apply_script_to_srt_subtitles() {  # input_pathname  output_pathname
 # exec 4<"${G_TMP_FILE}" ;
 # /bin/rm -f "${G_TMP_FILE}" ;
 
+  { # (I'm not going to bother adjusting the indent for this block ...)
   local ido=0 ;
   local idx=0 ;
 
   while [ "${SED_SCRIPT_ARRAY[$idx]}" != '' ] ; do  # {
 
     (( ido = (idx / 2) + 1 )) ; # A temp for displaying the regex index
-    echo -n "${ATTR_BROWN_BOLD}${ido}${ATTR_OFF}." ;
-
-    (( ido = idx + 1 )) ;
+    printf "${ATTR_BROWN_BOLD}%.2d${ATTR_OFF}." ${ido} ;
 
       #########################################################################
       # Insane shell escape sequences - also, the sed '-e' ordering is
       # important.  This is because some .ASS directives are preceeded by a
-      # '\', e.g. {\pos(13,80)}.  Also, regex captures are complicated to code
-      # -- I ended up using '%%%' to represent the '\' character.
+      # '\', e.g. {\pos(13,80)}.  Note, regex captures are complicated to code
+      # -- I ended up using '%%%' to represent the '\' character to simplify
+      # the scripting.
       #
-    echo -n '.' ;
-    REPLACEMENT_STR=`echo "${SED_SCRIPT_ARRAY[$ido]}" \
-                | ${SED} -e 's#\\\#\\\\\\\#g'   \
-                       -e 's/,&H/,\\\\\&H/g'  \
-                       -e 's/ <==> /\\\\n/g'  \
-                       -e 's/%%%/\\\/g'
+    ${GREP} -q "${SED_SCRIPT_ARRAY[$idx]}" "${ASS_SRC}" ; RC=$? ;
+    if [ ${RC} -eq 0 ] ; then  # {
+      echo -n "${ATTR_GREEN_BOLD}." ;
+      (( ido = idx + 1 )) ;
+      REPLACEMENT_STR=`echo "${SED_SCRIPT_ARRAY[$ido]}" \
+          | ${SED} -e 's#\\\#\\\\\\\#g'   \
+                   -e 's/,&H/,\\\\\&H/g'  \
+                   -e 's/ <==> /\\\\n/g'  \
+                   -e 's/%%%/\\\/g'
                  `;
-    echo -n '. ' ;
+      echo -n '! ' ;
 
-    echo "s#${SED_SCRIPT_ARRAY[$idx]}#${REPLACEMENT_STR}#" \
-      >> "${G_TMP_FILE}" ;
+      echo "s#${SED_SCRIPT_ARRAY[$idx]}#${REPLACEMENT_STR}#" \
+        >> "${G_TMP_FILE}" ;
+
+    else  # }{  Yeah, I know I made this way too fancy ...
+      echo -n "${ATTR_YELLOW_BOLD}.. " ;
+    fi  # }
+    echo -n "${ATTR_OFF}" ;
+
     (( idx += 2 )) ;
   done  # }
 
   #############################################################################
   # Note, if you want to use '--regexp-extended' then some of the expressions
-  # need to be reworked because of the syntax difference between the two modes.
-  # It just might be simpler to include another sed script here instead.
+  # need to be redone because of the syntax difference between the two modes.
+  # It just might be better to include another sed script here instead.
+  #
+  # Note, sometimes we may generate an EMPTY script -- it's okay, we'll run
+  # sed anyway since it's just easier to do and no error results ...
   #
   echo -n 'DOS..'
   cat "${ASS_SRC}"  \
       | ${DOS2UNIX} \
       | ${SED} "--file=${G_TMP_FILE}" \
     > "${ASS_DST}" ;
-  echo '.' ;
+  echo ".${ATTR_OFF}" ;
+
+    ###########################################################################
+    # This had me going for a bit -- fold seems to count all characters,
+    # including the invisible terminal control codes!  So I had to guesstimate
+    # a bit about the correct width to use.  It's a hack to keep the display
+    # width to about 76 __visible__ columns ...
+    #
+  } | ${FOLD} --width=360 --spaces \
+    | sed -e 's/^/    /' ;
 }
 
 
@@ -801,9 +865,6 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
     return ;
   fi
 
-  ## DBG
-##--del  /bin/cp "${ASS_SRC}" "${ASS_DST}" ; # Don't use '-p' to preserve this copy
-##--del  return ;
 
   #############################################################################
   # There might be better / more elegant ways to do this ...
@@ -816,7 +877,7 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
   # I've included a couple of commented out more complicated examples of what
   # can be done.
   #
-  # Because libass allows for and provides complex control over the subtitles, 
+  # Because libass allows for and provides complex control over the subtitles,
   # breaking up the sed command was the easiest way to manage all of the
   # complex shell escaping necessary for it to all work smoothly.  There are
   # quite a few special character collisions that have to be handled and I
@@ -958,7 +1019,7 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
       | ${SED} "--file=${G_TMP_FILE}" \
     > "${ASS_DST}" ;
   echo ".${ATTR_OFF}" ;
-    
+
     ###########################################################################
     # This had me going for a bit -- fold seems to count all characters,
     # including the invisible terminal control codes!  So I had to guesstimate
@@ -1078,7 +1139,9 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
           "${G_OPTION_NO_MODIFY_SRT}" \
           "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass" \
           "${G_SUBTITLE_PATHNAME}" ;
-    else  # }{ OKAY
+
+    else  # }{
+
       echo "${ATTR_YELLOW_BOLD}SRT SUBTITLE ALREADY PROCESSED$(tput sgr0) ..." ;
 
       G_SUBTITLE_PATHNAME="${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass"
@@ -1127,9 +1190,6 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
     # There are probably better ways to do this, but this works pretty well.
     # ls ; read MKV_FILE ; mkvmerge -i -F json "${MKV_FILE}" | jq '.tracks[]' | jq -r '[.id, .type, .properties.codec_id, .properties.track_name, .properties.language]|@sh' | grep "'subtitles' 'S_TEXT/ASS'"
 
-    # - 3 'subtitles' 'S_TEXT/ASS' 'Description' 'eng'
-    # - 3 'subtitles' 'S_TEXT/ASS' 'English Translation - With Effect' 'eng'
-    # - 3 'subtitles' 'S_TEXT/ASS' 'With Effect' 'eng'
     #   4 'subtitles' 'S_TEXT/ASS' 'Without Effect' 'eng'
     #   2 'subtitles' 'S_TEXT/UTF8' null 'eng'
 
@@ -1162,9 +1222,14 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
             "${G_SUBTITLE_PATHNAME}" \
             "${G_OPTION_ASS_SCRIPT}" ;
 
-        extract_font_attachments "${G_IN_FILE}" "${C_FONTS_DIR}" ;
+        extract_font_attachments \
+            "${G_IN_FILE}" \
+            "${C_FONTS_DIR}" \
+            0 ;
+
       elif ( echo "${SUBTITLE_TRACK}" | ${GREP} -q "'subtitles' 'S_TEXT/UTF8'" ) ; then  # }{
         echo "${ATTR_CYAN_BOLD}  SUB-RIP SUBTITLE FOUND IN VIDEO$(tput sgr0) ..." ;
+
         extract_subtitle_track "${G_IN_FILE}" \
             "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" \
             "${SUBTITLE_TRACK}" ;
@@ -1185,6 +1250,12 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
             "${G_OPTION_NO_MODIFY_SRT}" \
             "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass" \
             "${G_SUBTITLE_PATHNAME}" ;
+
+        extract_font_attachments \
+            "${G_IN_FILE}" \
+            "${C_FONTS_DIR}" \
+            1 ;
+
       else  # }{
         echo -n "${ATTR_YELLOW_BOLD}NOTICE${ATTR_OFF} $(tput bold)-- " ;
         echo -n "skipping unknown/unsupported "
@@ -1266,31 +1337,16 @@ else
   fi
 fi  # }
 
-if [ "${G_OPTION_NO_METADATA}" = '' ] ; then  # {
-  #############################################################################
-  # If the comment isn't set, then build a default comment.
-  # NOTE -- this has to be done here because we need to evaluate "$@" to get
-  #         the remaining ffmpeg options ...
-  #
-  G_VIDEO_COMMENT='' ;
-  if [ "${C_METADATA_COMMENT}" = '' ] ; then  # {
-    G_VIDEO_COMMENT="`cat <<HERE_DOC
-Encoded on $(date)
-$(uname -sr ; ffmpeg -version | egrep '^ffmpeg ' | sed -e 's/version //' -e 's/ Copyright.*//')
-ffmpeg -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K -c:v libx264 -preset ${C_FFMPEG_PRESET} -crf ${C_FFMPEG_CRF} -tune film -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} $(echo $@ | ${SED} -e 's/[\\]//g' -e "s#${HOME}#\\\${HOME}#g" -e 's/ -metadata .*//')
-HERE_DOC
-`" ;
-  else  # }{
-    echo 'FIXME' ;
-  fi  # }
-fi  # }
 
 ###############################################################################
+# This is where the hammer meets the road!
 #
 if [ ! -s "${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then  # {
 
   RC=0 ;
-  if [ "${G_OPTION_NO_METADATA}" = 'y' ] ; then  # {
+  if   [ "${G_OPTION_NO_COMMENT}" = 'y' ] \
+    || [ "${G_OPTION_NO_METADATA}" = 'y' ] ; then  # {
+
     set -x ; # We want to KEEP this enabled.
     ${FFMPEG} -i "${G_IN_FILE}" \
               -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K \
@@ -1300,7 +1356,26 @@ if [ ! -s "${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then  
               "$@" \
               "file:${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ;
     { RC=$? ; set +x ; } >/dev/null 2>&1
+
   else  # }{
+
+      #########################################################################
+      # If the comment isn't set, then build a default comment.
+      # NOTE -- this has to be done here because we need to evaluate "$@"
+      #         to get the remaining ffmpeg options ...
+      #
+    G_VIDEO_COMMENT='' ;
+    if [ "${C_METADATA_COMMENT}" = '' ] ; then  # {
+      G_VIDEO_COMMENT="`cat <<HERE_DOC
+Encoded on $(date)
+$(uname -sr ; ffmpeg -version | egrep '^ffmpeg ' | sed -e 's/version //' -e 's/ Copyright.*//')
+ffmpeg -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K -c:v libx264 -preset ${C_FFMPEG_PRESET} -crf ${C_FFMPEG_CRF} -tune film -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} $(echo $@ | ${SED} -e 's/[\\]//g' -e "s#${HOME}#\\\${HOME}#g" -e 's/ -metadata .*//')
+HERE_DOC
+`" ;
+    else  # }{
+      echo 'FIXME' ;
+    fi  # }
+
     set -x ; # We want to KEEP this enabled.
     ${FFMPEG} -i "${G_IN_FILE}" \
               -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K \
@@ -1311,11 +1386,8 @@ if [ ! -s "${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then  
               -metadata "comment=${G_VIDEO_COMMENT}" \
               "file:${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ;
     { RC=$? ; set +x ; } >/dev/null 2>&1
-###--         -metadata "title=${G_METADATA_TITLE}" \
-###--         -metadata "genre=${C_METADATA_GENRE}" \
-###--         -metadata "comment=${G_VIDEO_COMMENT}" \
-  fi  # }
 
+  fi  # }
 else  # }{
 
   echo "$(tput setaf 3 ; tput bold)COMPLETED$(tput sgr0; tput bold) '${G_IN_FILE}'$(tput sgr0) ..." ;
