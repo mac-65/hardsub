@@ -6,7 +6,7 @@ It is being developed under Fedora 34 linux, and should be portable to other lin
 
 This script is buggy, not well documented (yet), and under active development -- use at your own risk.
 
-### Rational
+#### Rational
 I want to watch some media on my olde Samsung TV.
 It can barely handle SRT subtitles and has no knowlegde of Substation *anything*!
 Also, it (as far as I know) can't play flac or anything above yuv420p for x264.
@@ -19,7 +19,20 @@ USAGE ::
  ls *.flv *.avi *.mkv *.mp4 *.webm *.ts *.mpg *.vob 2>/dev/null | while read yy ; do ./hardsub.sh "${yy}" ; done
 ```
 
-Some directories need to be built -- look through the script (for now) to see which ones.
+It uses the <strong>MP4</strong> video container for the re-encoded video and saves the videos in the directory specified by the <code>C_VIDEO_OUT_DIR</code> (defaults to './OUT DIR' for now, will be an option later).
+
+Some directories need to be built -- look through the script (for now) to see which ones:
+```
+C_SUBTITLE_OUT_DIR='./SUBs' ;
+C_FONTS_DIR="${HOME}/.fonts" ;
+C_VIDEO_OUT_DIR='OUT DIR' ;
+C_SUBTITLE_IN_DIR='IN SUBs' ;
+```
+
+## Subtitles
+Two types of subtitles are supported: SubRip (SRT) and Advanced Substation Alpha (ASS).<br>
+
+If a video contains a subtitle, the script can perform edits on the script before passing it along to <code>ffmpeg</code>.  Generally, for a *lyrical* subtitle, you probably would NOT make any changes (and it doesn't), but for other types of subtitles, changing the font, its size, and/or it colour can really improve the readability of the text.
 
 ## Prerequisites and Required Tools
 

@@ -227,10 +227,18 @@ AGREP_FUZZY_ERRORS=5 ; # This value is mostly arbitrary and arrived at by testin
                        # determine if the Title in the video is unusable (garbage)
                        # based on comparing it with the filename of the video.
 SED='/usr/bin/sed' ;
+CUT='/usr/bin/cut' ;
 CP='/usr/bin/cp' ;
 FOLD='/usr/bin/fold' ;
 HEAD='/usr/bin/head' ;
 EXIFTOOL='/usr/bin/exiftool' ;
+
+  #############################################################################
+  # We need a "special" character, one that would NOT normally appear in a
+  # Title so that we can know if a title can be split into Atrist / Title.
+  # TODO -- maybe this isn't really needed to...
+  #
+CUT_DELIM=
 
 C_SCRIPT_NAME="$(basename "$0" '.sh')" ;
 
@@ -313,11 +321,7 @@ declare -a SED_SCRIPT_ARRAY=();
   # Also, there doesn't seem to be a way to easily remove all metadata from
   # a video during the re-encoding process.
   #
-G_METADATA_TITLE='' ;            # '-metadata title=' the video's filename
-                                 # If it's = '', we'll build it from the
-                                 # filename and clean it up a bit ...
-C_METADATA_ARTIST='' ;           # Artist ...
-C_METADATA_GENRE='Music Video' ; # '-metadata genre=' tag default for the video
+C_DEFAULT_GENRE='Music Video' ;  # '-metadata genre=' tag default for the video
 C_METADATA_COMMENT='' ;          # Search for this to modify what is included
                                  # when the default comment is built.  The
                                  # default comment includes the encoding flags,
@@ -521,28 +525,33 @@ get_video_title() {
     out_title="${in_title}" ;
 
   else  # }{
-    local name_in_video="$(${EXIFTOOL} "${in_filename}" \
+    local title_in_video="$(${EXIFTOOL} "${in_filename}" \
                      | ${GREP} '^Title' \
                      | sed -e 's/^.*: //')" ;
-    if [ "${name_in_video}" = '' ] ; then  # }{
+    if [ "${title_in_video}" = '' ] ; then  # {
         #######################################################################
         # There is no Title in the video, so make one from the filename.
         # TODO :: use a simple rule-base algorithm to split the name into the
         #         Artist and song Title if there's a hyphen in the filename.
         #         If the split is successful, then cleanup the artist-title by
         #         removing […]s everywhere & (…) from the front of the Artist.
+        # ALSO :: if the file is a webm type (say from U-tube), assume the
+        #         'Title' field, if present, is always the best video title.
         #
+        ## FIXME -- I should do this filtering cleanup elsewhere ...
       out_title="$(echo "${in_video_basename}" \
                    | ${SED} -e 's/[_+]/ /g'  \
                    )" ;
     elif [ "${G_OPTION_NO_FUZZY}" = '' ] ; then  # }{
       local fuzzy_errors=0 ;
-      for fuzz in {1..12} ; do
+      for fuzz in {1..12} ; do  # {
         echo "${in_filename}" \
-          | ${AGREP} -${fuzz} -k -i -q "${name_in_video}" ;
-          (( fuzzy_errors += $? )) ;
-      done
+          | ${AGREP} -${fuzz} -k -i -q "${title_in_video}" ;
+        (( fuzzy_errors += $? )) ;
+      done  # }
       if [ ${fuzzy_errors} -gt ${AGREP_FUZZY_ERRORS} ] ; then  # {
+
+          ## FIXME -- I should do this filtering cleanup elsewhere ...
         out_title="$(echo "${in_video_basename}" \
                      | ${SED} -e 's/[_+]/ /g'  \
                      )" ;
@@ -550,8 +559,48 @@ get_video_title() {
     fi  # }
   fi  # }
 
+  #############################################################################
+  # Ensure that any single quotes are escaped.  FIXME should be done elsewhere.
   ## 'title=The Byrd'"'"'s - Turn! Turn! Turn! (2nafish)'
+  #
   echo "$(echo "${out_title}" \
+                   | ${SED} -e 's#\([\x27]\)#\1"\1"\1#g')" ;
+}
+
+
+###############################################################################
+###############################################################################
+#
+get_video_genre() {
+  local in_filename="$1" ; shift ;
+  local in_genre="$1" ; shift ;
+  local in_default_genre="$1" ; shift ;
+
+  local out_genre='' ; # The default if 'Genre' IS set in the video
+
+  if [ "${in_genre}" != '' ] ; then  # {
+      # The genre is explicitly set by the user
+    out_genre="${in_genre}" ;
+
+  else  # }{
+    local genre_in_video="$(${EXIFTOOL} "${in_filename}" \
+                     | ${GREP} '^Genre' \
+                     | sed -e 's/^.*: //')" ;
+    if [ "${genre_in_video}" = '' ] ; then  # {
+        #######################################################################
+        # There is no Genre in the video, so use the default.
+        #
+      out_genre="${in_default_genre}" ;
+
+    else  # }{
+      out_genre="${genre_in_video}" ;
+    fi  # }
+  fi  # }
+
+  #############################################################################
+  # Ensure that any single quotes are escaped.  FIXME should be done elsewhere.
+  #
+  echo "$(echo "${out_genre}" \
                    | ${SED} -e 's#\([\x27]\)#\1"\1"\1#g')" ;
 }
 
@@ -612,7 +661,8 @@ extract_font_attachments() {
     local attachment_ID=`echo "${attachment_line}" \
                         | ${SED} -e 's/Attachment ID \([0-9][0-9]*\):.*$/\1/'` ;
     local attachment_file=`echo "${attachment_line}" \
-                        | cut -d' ' -f 11- | ${SED} -e "s/'//g"` ;
+                        | ${CUT} -d' ' -f 11- \
+                        | ${SED} -e "s/'//g"` ;
 
     local font_pathname="${attachments_dir}/${attachment_file}" ;
 
@@ -1257,7 +1307,7 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
             1 ;
 
       else  # }{
-        echo -n "${ATTR_YELLOW_BOLD}NOTICE${ATTR_OFF} $(tput bold)-- " ;
+        echo -n "${ATTR_YELLOW_BOLD}$(tput blink)NOTICE${ATTR_OFF} $(tput bold)-- " ;
         echo -n "skipping unknown/unsupported "
         echo -n "$(tput setaf 5)S_TEXT$(tput sgr0; tput bold) "
         echo    "subtitle type -- $(tput sgr0)" ;
@@ -1273,28 +1323,22 @@ fi  # }
 ###############################################################################
 # HERE-HERE
 ###############################################################################
-#             -metadata "title=${G_METADATA_TITLE}" \
-#             -metadata "genre=${C_METADATA_GENRE}" \
-#             -metadata "comment=${G_VIDEO_COMMENT}" \
-# ' = \x27
 #               | ${SED} -e 's#\([][ :,()\x27]\)#\\\\\\\\\\\\\1#g' ;
 #               | ${SED} -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g' ; # NO COMMA
-# G_OPTION_TITLE='' ;
-# G_OPTION_ARTIST='' ;
-# G_OPTION_GENRE='' ;
 #
 FFMPEG_METADATA='' ;
 if [ "${G_OPTION_NO_METADATA}" = '' ] ; then  # {
 
-  set -x ;
   G_METADATA_TITLE="$(get_video_title "${G_IN_FILE}" "${G_OPTION_TITLE}" "${G_IN_BASENAME}")" ;
   if [ "${G_METADATA_TITLE}" != '' ] ; then  # {
-     FFMPEG_METADATA=" '-metadata' 'title=${G_METADATA_TITLE}'" ;
+    ## TODO :: split the artist / title here?
+    FFMPEG_METADATA=" '-metadata' 'title=${G_METADATA_TITLE}'" ;
   fi  # }
 
-  if [ "${G_OPTION_GENRE}" = '' ] ; then
-  FFMPEG_METADATA="${FFMPEG_METADATA} '-metadata' 'genre=${C_METADATA_GENRE}'" ;
-  fi
+  G_METADATA_GENRE="$(get_video_genre "${G_IN_FILE}" "${G_OPTION_GENRE}" "${C_DEFAULT_GENRE}")" ;
+  if [ "${G_METADATA_GENRE}" != '' ] ; then  # {
+    FFMPEG_METADATA="${FFMPEG_METADATA} '-metadata' 'genre=${G_METADATA_GENRE}'" ;
+  fi  # }
   { set +x ; } >/dev/null 2>&1
 fi  # }
 
