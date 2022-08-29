@@ -288,12 +288,19 @@ G_OPTION_NO_METADATA='' ;       # Do NOT add any metadata in the re-encoding
                                 # NOTE :: this implies '--no-comment'.
 G_OPTION_NO_COMMENT='' ;        # Do NOT write a '-metadata comment='.  Other
                                 # metadata will be written if appropriate.
+G_OPTION_PRESETS=0 ;            # Number of preset selected on commandline.
+                                # If > 1, we'll warn the user, otherwise ...
 G_OPTION_TITLE='' ;
 G_OPTION_ARTIST='' ;
 G_OPTION_GENRE='' ;
 
 G_VIDEO_OUT_DIR='OUT DIR' ;     # the re-encoded video's save location
 C_SUBTITLE_IN_DIR='IN SUBs' ;   # location for manually added subtitles
+
+  #############################################################################
+  # Video filter setup area ...
+  #
+G_POST_VIDEO_FILTER='' ;
 
 declare -a SED_SCRIPT_ARRAY=();
 
@@ -383,6 +390,41 @@ my_usage() {
 
 
 ###############################################################################
+# Configure a preset.
+#
+# A preset is a static set of configuration(s) that you may want to always
+# apply to a specific playback device.  Examples might include always scaling
+# the video to the device's screen size, or other re-encoding attributes.
+#
+##  configure_preset "$1" "$2" "${G_OPTION_PRESETS}" ;
+configure_preset() {
+  set -x ;
+  local my_option="$1" ; shift ;
+  local my_preset="$1" ; shift ;
+  local my_preset_count="$1" ; shift ;
+
+  while : ; do  # {
+    if [ "${my_preset}" = '' ] ; then  # Pedantic, I know ...
+      echo "${ATTR_ERROR} '${my_option}' requires a preset name to apply." >&2 ;
+      break ;
+    fi
+
+# ffmpeg -y -i "3 Doors Down - It's Not My Time (CrawDad).mpg" -c:a libmp3lame -ab 320K -c:v libx264 -preset veryslow -crf 21 -tune film -vf transpose=2,scale=240:-1 test.mp4
+    case "${my_preset}" in  # {
+    linkII|ZTE)
+      G_POST_VIDEO_FILTER='transpose=2,scale=240:-1' ;
+      ;;
+    esac  # }
+
+    return 0;
+  done ;  # }
+
+      { set +x ; } >/dev/null 2>&1
+  exit 1;
+}
+
+
+###############################################################################
 # Validate and build a directory.
 #
 # If successful, we return the directory’s name if an OPTION was specified.
@@ -410,20 +452,20 @@ check_and_build_directory() {
     # mkdir rolls up a bunch of validity checking for us ...
     #
     err_msg="$(mkdir -p "${my_directory}" 2>&1)" ; RC=$? ;
-    if [ ${RC} -ne 0 ] ; then
+    if [ ${RC} -ne 0 ] ; then  # {
       echo -n "${ATTR_ERROR} " ;
       if [ "${my_option}" != '' ] ; then
         echo    "${my_option}='${ATTR_YELLOW}${my_directory}${ATTR_OFF}'," >&2 ;
       fi
       echo "${err_msg}" >&2 ;
       break ;
-    fi
+    fi  # }
 
       #########################################################################
       # SUCCESS :: return (echo) the successfully built directory is required.
       #
     [ "${my_option}" != '' ] && echo "${my_directory}" ;
-    return ;
+    return 0;
   done ;  # }
 
     ###########################################################################
@@ -470,6 +512,7 @@ no-comment,\
 no-metadata,\
 no-modify-srt,\
 no-fuzzy,\
+preset::,\
 out-dir::,\
 font-size:: \
     -n "${ATTR_ERROR} ${ATTR_BLUE_BOLD}${MY_SCRIPT}${ATTR_YELLOW}" -- "$@"` ;
@@ -507,6 +550,11 @@ while true ; do  # {
     ;;
   --out-dir)
     G_VIDEO_OUT_DIR="$(check_and_build_directory "$1" "$2")" ;
+    shift 2;
+    ;;
+  --preset)
+    (( G_OPTION_PRESETS++ ));
+    configure_preset "$1" "$2" "${G_OPTION_PRESETS}" ;
     shift 2;
     ;;
   -v|--verbose)
@@ -671,10 +719,11 @@ get_video_genre() {
   local out_genre='' ; # The default if 'Genre' IS set in the video
 
   if [ "${in_genre}" != '' ] ; then  # {
-      # The genre is explicitly set by the user
-    out_genre="${in_genre}" ;
+
+    out_genre="${in_genre}" ; # The genre is explicitly set by the user
 
   else  # }{
+
     local genre_in_video="$(${EXIFTOOL} "${in_filename}" \
                      | ${GREP} '^Genre' \
                      | sed -e 's/^.*: //')" ;
@@ -683,14 +732,16 @@ get_video_genre() {
         # There is no Genre in the video, so use the default.
         #
       out_genre="${in_default_genre}" ;
-
     else  # }{
-      out_genre="${genre_in_video}" ;
+        #######################################################################
+      : # The Genre IS set in the video, ffmpeg will copy it while re-encoding.
+        #
     fi  # }
   fi  # }
 
   #############################################################################
   # Ensure that any single quotes are escaped.  FIXME should be done elsewhere.
+  # TODO :: Do I also need to escape the ',' character in the genre?
   #
   echo "$(echo "${out_genre}" \
                    | ${SED} -e 's#\([\x27]\)#\1"\1"\1#g')" ;
@@ -1447,7 +1498,7 @@ if [ "${G_SUBTITLE_PATHNAME}" = '' ] ; then  # {
     C_FFMPEG_VIDEO_FILTERS="`echo "${C_VIDEO_FILTERS}" \
                 | ${SED} -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
                   # NOTE absence of ',' after the ':'
-    eval set -- "'-vf' ${C_FFMPEG_VIDEO_FILTERS}${FFMPEG_METADATA}" ;
+    eval set -- "'-vf' ${C_FFMPEG_VIDEO_FILTERS}" ;
   fi
 else
   G_FFMPEG_SUBTITLE_FILENAME="`echo "${G_SUBTITLE_PATHNAME}" \
@@ -1455,15 +1506,30 @@ else
   G_FFMPEG_FONTS_DIR="`echo "${C_FONTS_DIR}" \
                 | ${SED} -e 's#\([][ :,()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
 
-  if [ "${C_VIDEO_FILTERS}" = '' ] ; then
-    eval set -- "'-vf' subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}${FFMPEG_METADATA}" ;
-  else
+  if [ "${C_VIDEO_FILTERS}" = '' ] ; then  # {
+    eval set -- "'-vf' subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}" ;
+  else  # }{
     C_FFMPEG_VIDEO_FILTERS="`echo "${C_VIDEO_FILTERS}" \
                 | ${SED} -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
                   # NOTE absence of ',' after the ':'
-    eval set -- "'-vf' ${C_FFMPEG_VIDEO_FILTERS},subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}${FFMPEG_METADATA}" ;
-  fi
+    eval set -- "'-vf' ${C_FFMPEG_VIDEO_FILTERS},subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}" ;
+  fi  # }
 fi  # }
+
+#eval set -- "$@" ;
+echo '###########################################################################' ;
+echo "$@" ;
+echo "$#" ;
+echo '###########################################################################' ;
+ARGs='' ;
+for ARG in "$@" ; do
+  ARGs="${ARGs}'${ARG}' ";
+done
+eval set -- "${ARGs}${FFMPEG_METADATA}" ;
+echo '###########################################################################' ;
+echo "$@" ;
+echo "$#" ;
+echo '###########################################################################' ;
 
 
 ###############################################################################
