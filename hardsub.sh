@@ -25,9 +25,18 @@ if false ; then
         echo -n ". $(tput bold; tput blink; tput setaf 3)COPY" ;
       fi ;
       tput sgr0 ; echo ;
-    done
+    done ; cd /avm1/NO_RSYNC/MVs ;
 fi
 
+if false ; then
+for yy in * ; do
+  if [ ! -d "${yy}" -a -s "${yy}" ] ; then
+    echo "${yy}" ;
+    exiftool "${yy}" \
+      | egrep 'Artist|Title|Album|Genre' ;
+  fi ;
+done ;
+fi
 
 ###############################################################################
 # NOTE + TODO:
@@ -57,6 +66,8 @@ fi
 #   Alpha.  There is no timed text support (have to externally convert it to,
 #   say SRT and use that subtitle file if I want to support it).
 #   Timed text, I believe, is what U-tube uses for auto-translation, etc.
+#
+# ffmpeg -y -i "test.mpg" -c:a copy -vf transpose=2,scale=240:-1 test.mp4
 ###############################################################################
 #
 # https://askubuntu.com/questions/366103/saving-more-corsor-positions-with-tput-in-bash-terminal
@@ -222,7 +233,8 @@ MKVEXTRACT='/usr/bin/mkvextract' ;
 DOS2UNIX='/bin/dos2unix --force' ;
 GREP='/usr/bin/grep --text' ; # saves the embarrassing "binary file matches"
 AGREP='/usr/bin/agrep' ;
-AGREP_FUZZY_ERRORS=5 ; # This value is mostly arbitrary and arrived at by testing.
+AGREP_FUZZY_ITERS=6 ;  # Number of agrep passes to make
+AGREP_FUZZY_ERRORS=2 ; # This value is mostly arbitrary and arrived at by testing.
                        # This is the number of 'agrep' "failures" we'll count to
                        # determine if the Title in the video is unusable (garbage)
                        # based on comparing it with the filename of the video.
@@ -370,17 +382,20 @@ my_usage() {
   exit $L_RC ;
 }
 
-necho() {
-  local ARG="$1" ; shift ;
 
-  [ "${G_OPTION_VERBOSE}" = 'y' ] && echo -n "${ARG}" ;
+###############################################################################
+# Check and build a directory, return the directory's name if seccessful.
+# DOES NOT return if there was an error.
+#
+check_and_build_directory() {
+  set -x ;
+  local my_option="$1" ; shift ;
+  local my_directory="$1" ; shift ;
+
+  echo "${my_directory}" ;
+  { set +x ; } >/dev/null 2>&1
 }
 
-vecho() {
-  local ARG="$1" ; shift ;
-
-  [ "${G_OPTION_VERBOSE}" = 'y' ] && echo "${ARG}" ;
-}
 
 ###############################################################################
 #
@@ -403,13 +418,20 @@ fi
 # Stuff the parsed options back into the arg[] list (quotes are essential)...
 # (You know, I don't remember why I originally chose this particular method.)
 #
+# As a stylistic choice, I want to enforce *long options* which require an
+# argument to use the '--option=argument' syntax.  To do this, I set those
+# option's arguments as __optional__.  This causes 'getopt' to only consider
+# an option as having an argument when it is preceded by the '=' character.
+# I think this makes the command line easier to read and less error prone.
+#
 HS_OPTIONS=`getopt -o h::vc:f:yt:q: \
     --long help::,verbose,config:,fonts-dir:,copy-to:,quality:,\
 debug,\
 no-subs,\
 no-metadata,\
 no-modify-srt,\
-no-fuzzy \
+no-fuzzy,\
+out-dir:: \
     -n "${ATTR_ERROR} ${ATTR_BLUE_BOLD}${MY_SCRIPT}${ATTR_YELLOW}" -- "$@"` ;
 
 if [ $? != 0 ] ; then
@@ -444,6 +466,13 @@ while true ; do  # {
     ;;
   --no-fuzzy)
     G_OPTION_NO_FUZZY='y' ; shift ;
+    ;;
+  --out-dir)
+    echo "OPTARG='${OPTARG}'" ;
+    C_VIDEO_OUT_DIR="$(check_and_build_directory "$1" "$2")" ;
+    shift ;
+    shift ;
+    exit
     ;;
   -v|--verbose)
     G_OPTION_VERBOSE='y' ; shift ;
@@ -543,13 +572,27 @@ get_video_title() {
                    | ${SED} -e 's/[_+]/ /g'  \
                    )" ;
     elif [ "${G_OPTION_NO_FUZZY}" = '' ] ; then  # }{
+        #######################################################################
+        # Okay, the source video has a 'Title' metadata tag set.  If the user
+        # does NOT want to fuzzy compare it with the video's filename, then
+        # we'll return '' and ffmpeg will copy the source 'Title' metadata.
+        #
+        # We're going to see if the 'Title' field in the source video has any
+        # compatibility with the filename of the video.  If it's compatible,
+        # then we assume the 'Title' field in the source video is a good name.
+        # Otherwise, we'll try to build the video's title from its filename.
+        #
+        # This crazy method of testing / comparing the 2 strings seems to be
+        # the most reliable for detecting a garbage Title string in the source
+        # video.  Honestly, I dunno if this is the “proper” way to use agrep.
+        #
       local fuzzy_errors=0 ;
-      for fuzz in {1..12} ; do  # {
+      for (( fuzz=1; fuzz <= ${AGREP_FUZZY_ITERS}; fuzz++ )); do
         echo "${in_filename}" \
           | ${AGREP} -${fuzz} -k -i -q "${title_in_video}" ;
         (( fuzzy_errors += $? )) ;
       done  # }
-      if [ ${fuzzy_errors} -gt ${AGREP_FUZZY_ERRORS} ] ; then  # {
+      if [ ${fuzzy_errors} -ge ${AGREP_FUZZY_ERRORS} ] ; then  # {
 
           ## FIXME -- I should do this filtering cleanup elsewhere ...
         out_title="$(echo "${in_video_basename}" \
@@ -1090,6 +1133,7 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
 #       #     #     #    #    #  #   #      #
 #        #####      #    #    #  #    #     #
 ###############################################################################
+# main();
 #
 echo -n "${ATTR_BLUE_BOLD}<< " ;
 echo -n "'${ATTR_GREEN_BOLD}${G_IN_FILE}${ATTR_OFF}${ATTR_BLUE_BOLD}'"
@@ -1101,16 +1145,6 @@ if [ -s "${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then
   exit 0;
 fi
 
-
-###############################################################################
-# See if the input video has some subtitles.
-# If so, then burn them into the converted file.
-#
-# :: This might be the best place to see if ‘--no-subs’ was specified on the
-#    command line (IOWs, this is enclosed by an IF).  Other changes have to be
-#    made later in this script to ensure subtitles are NOT encoeded if that is
-#    the case.
-#
 
 ###############################################################################
 #   #####
@@ -1165,7 +1199,7 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
     # between the filesystems (e.g., ext3 vs. ntfs or fat32).  This used to
     # work; dunno if it has been fixed in the interim and google returns way
     # too many results for any search terms I can think of to see if it's even
-    # been identified as a bug.
+    # been identified as a bug/feature.
     #
     if [ "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" \
      -nt "${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" ] ; then  # { OKAY
@@ -1249,6 +1283,7 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
     #
 
   else  # }{
+
     SUBTITLE_TRACK="$(${MKVMERGE} -i -F json "${G_IN_FILE}" \
         | jq '.tracks[]' \
         | jq -r '[.id, .type, .properties.codec_id, .properties.track_name, .properties.language]|@sh' \
@@ -1351,10 +1386,10 @@ fi  # }
 #
 # There might be a cleaner/cleverer way to do this, but darn if I know how to!
 #
-# NOTE :: All/any of the metadata ffmpeg options are appended to the end and
-#         we make special use of that to strip them from the comment metadata
-#         since we want to use that mainly for ffmpeg encoding options and NOT
-#         data that is easily viewable with other tools.
+# NOTE :: All/any of the metadata ffmpeg options are appended to the end.
+#         We make special use of that to strip them from the comment metadata
+#         since we want to use that mainly for the ffmpeg re-encoding options
+#         and NOT data that is easily viewable with other tools.
 #
 if [ "${G_SUBTITLE_PATHNAME}" = '' ] ; then  # {
   if [ "${C_VIDEO_FILTERS}" = '' ] ; then
