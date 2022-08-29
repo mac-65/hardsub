@@ -1,43 +1,66 @@
 # hardsub.sh
 
-This is a simple command line shell script to hardsub a subtitle track onto a video.
+###############################################################################<br>
+This is a simple command line shell script to hardsub
+a subtitle track onto a video.
 
-It is being developed under Fedora 34 linux, and should be portable to other linux distros, Apple, and possibly Windows with the proper support toolbox.
+It is being developed under Fedora 34 linux, and should be portable to other
+linux distros, Apple, and possibly Windows with the proper support toolbox.
 
-This script is buggy, not well documented (yet), and under active development -- use at your own risk.
+This script is buggy, not well documented (yet), and under active development --
+use at your own risk.
 
 #### Rational
 I want to watch some media on my olde Samsung TV.
 It can barely handle SRT subtitles and has no knowlegde of Substation *anything*!
 Also, it (as far as I know) can't play flac or anything above yuv420p for x264.
 
+#### Design Philosophy
+The script is meant to run as simply as possible without setting a lot of
+command line options to get anything to work.  For most use cases, no options
+or very few options are needed.  The idea is that this script can be used in
+a "batch" mode with many different types of source videos to produce a
+reasonable batch of output files in a unified video container.
+
 ## Getting Started
-For now, until *real* help is written, just execute <code>./hardsub</code> to get a simple command line snippet to run --<br>
+For now, until *real* help is written, just execute <code>./hardsub</code>
+to get a simple command line snippet to run --<br>
 ```
 ./hardsub.sh
 USAGE ::
  ls *.flv *.avi *.mkv *.mp4 *.webm *.ts *.mpg *.vob 2>/dev/null | while read yy ; do ./hardsub.sh "${yy}" ; done
 ```
 
-It uses the <strong>MP4</strong> video container for the re-encoded video and saves the videos in the directory specified by the <code>C_VIDEO_OUT_DIR</code> (defaults to './OUT DIR' for now, will be an option later).
+It uses the <strong>MP4</strong> video container for the re-encoded video and
+saves the video in the directory specified by the <code>G_VIDEO_OUT_DIR</code>.
 
-Some directories need to be built -- look through the script (for now) to see which ones:
+Some directories need to be built --
+look through the script (for now) to see which ones:
 ```
+G_VIDEO_OUT_DIR='OUT DIR' ; # --out-dir=
 C_SUBTITLE_OUT_DIR='./SUBs' ;
 C_FONTS_DIR="${HOME}/.fonts" ;
-C_VIDEO_OUT_DIR='OUT DIR' ;
 C_SUBTITLE_IN_DIR='IN SUBs' ;
 ```
 
 ## Subtitles
-Two types of subtitles are supported: SubRip (SRT) and Advanced Substation Alpha (ASS).<br>
+Two types of subtitles are supported:
+SubRip (SRT) and Advanced Substation Alpha (ASS).<br>
 
-If a video contains a subtitle, the script can perform edits on the script before passing it along to <code>ffmpeg</code>.  Generally, for a *lyrical* subtitle, you probably would NOT make any changes (and it doesn't), but for other types of subtitles, changing the font, its size, and/or it colour can really improve the readability of the text.
+If a video contains a subtitle *track*, the script can perform edits on the
+script before passing it along to <code>ffmpeg</code>.
+Generally, for a *lyrical* subtitle, you probably would NOT make any changes
+(and it doesn't), but for other types of subtitles, changing the font,
+its size, and/or it colour can really improve the readability of the text.<br>
+Some of these text attributes are configurable on the command line
+(e.g. <code>--font-size=</code>), and
+more complex changes will have to be made in the script (for now).
 
 ## Prerequisites and Required Tools
 
 These are the tools needed to run this script.
-The script (right now) assumes their installation and will probably just die if anything is missing.
+The script (right now) assumes their installation and will probably just
+die if anything is missing.
 
 - ffmpeg
 - mkvtoolnix

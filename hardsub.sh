@@ -175,7 +175,6 @@ exit_handler() {
    [ "${G_OPTION_DEBUG}" = '' ] \
        && [ -f "${G_TMP_FILE}" ] \
        && /bin/rm -f "${G_TMP_FILE}" ;
-   echo 'EXITING' ;
 }
 
 sigint_handler() {
@@ -224,8 +223,8 @@ trap 'exit_handler' EXIT ;
 #                 may require building from source.
 #
 MY_SCRIPT="`basename \"$0\"`" ;
-DBG='.' ;
 DBG='' ;
+DBG=':' ;
 FFMPEG='/usr/local/bin/ffmpeg -y -nostdin -hide_banner' ;
 FFMPEG='ffmpeg -y -nostdin -hide_banner -loglevel info' ;
 MKVMERGE='/usr/bin/mkvmerge' ;
@@ -293,7 +292,7 @@ G_OPTION_TITLE='' ;
 G_OPTION_ARTIST='' ;
 G_OPTION_GENRE='' ;
 
-C_VIDEO_OUT_DIR='OUT DIR' ;     # the re-encoded video's save location
+G_VIDEO_OUT_DIR='OUT DIR' ;     # the re-encoded video's save location
 C_SUBTITLE_IN_DIR='IN SUBs' ;   # location for manually added subtitles
 
 declare -a SED_SCRIPT_ARRAY=();
@@ -384,16 +383,53 @@ my_usage() {
 
 
 ###############################################################################
-# Check and build a directory, return the directory's name if seccessful.
-# DOES NOT return if there was an error.
+# Validate and build a directory.
+#
+# If successful, we return the directory’s name if an OPTION was specified.
+#
+# We use this to check those options and to validate the default directories
+# used by this script for access, etc.  DOES NOT return if there was an error.
+#
+# It *look* like we call this twice for options which require a directory, but
+# the first call is the “Pedantic” test for the option, and the second call is
+# to validate the selected directory (redundant) or its default value.
 #
 check_and_build_directory() {
-  set -x ;
   local my_option="$1" ; shift ;
   local my_directory="$1" ; shift ;
 
-  echo "${my_directory}" ;
-  { set +x ; } >/dev/null 2>&1
+  ${DBG} echo "OPTION = '${my_option}', DIR = '${my_directory}'" >&2 ;
+
+  while : ; do  # {
+    if [ "${my_directory}" = '' ] ; then  # Pedantic, I know ...
+      echo "${ATTR_ERROR} '${my_option}' requires a directory path." >&2 ;
+      break ;
+    fi
+
+    ###########################################################################
+    # mkdir rolls up a bunch of validity checking for us ...
+    #
+    err_msg="$(mkdir -p "${my_directory}" 2>&1)" ; RC=$? ;
+    if [ ${RC} -ne 0 ] ; then
+      echo -n "${ATTR_ERROR} " ;
+      if [ "${my_option}" != '' ] ; then
+        echo    "${my_option}='${ATTR_YELLOW}${my_directory}${ATTR_OFF}'," >&2 ;
+      fi
+      echo "${err_msg}" >&2 ;
+      break ;
+    fi
+
+      #########################################################################
+      # SUCCESS :: return (echo) the successfully built directory is required.
+      #
+    [ "${my_option}" != '' ] && echo "${my_directory}" ;
+    return ;
+  done ;  # }
+
+    ###########################################################################
+    # FAILURE :: exit; we've alredy printed an appropriate error message above.
+    #
+  exit 1 ;
 }
 
 
@@ -422,16 +458,20 @@ fi
 # argument to use the '--option=argument' syntax.  To do this, I set those
 # option's arguments as __optional__.  This causes 'getopt' to only consider
 # an option as having an argument when it is preceded by the '=' character.
+# That is, it always returns an argument for the option and if the argument
+# is an EMPTY string (''), then an "optional" argument was NOT provided.
 # I think this makes the command line easier to read and less error prone.
 #
 HS_OPTIONS=`getopt -o h::vc:f:yt:q: \
     --long help::,verbose,config:,fonts-dir:,copy-to:,quality:,\
 debug,\
 no-subs,\
+no-comment,\
 no-metadata,\
 no-modify-srt,\
 no-fuzzy,\
-out-dir:: \
+out-dir::,\
+font-size:: \
     -n "${ATTR_ERROR} ${ATTR_BLUE_BOLD}${MY_SCRIPT}${ATTR_YELLOW}" -- "$@"` ;
 
 if [ $? != 0 ] ; then
@@ -451,8 +491,6 @@ while true ; do  # {
   --no-modify-srt)
     G_OPTION_NO_MODIFY_SRT='y' ; shift ;
     ;;
-# --copy-title) # Attempt to copy the title from the source __video__
-#   ;;
 # --mux-subs)   # If there are subtitles, then also MUX them into the video
 #   ;;
   --debug)
@@ -468,11 +506,8 @@ while true ; do  # {
     G_OPTION_NO_FUZZY='y' ; shift ;
     ;;
   --out-dir)
-    echo "OPTARG='${OPTARG}'" ;
-    C_VIDEO_OUT_DIR="$(check_and_build_directory "$1" "$2")" ;
-    shift ;
-    shift ;
-    exit
+    G_VIDEO_OUT_DIR="$(check_and_build_directory "$1" "$2")" ;
+    shift 2;
     ;;
   -v|--verbose)
     G_OPTION_VERBOSE='y' ; shift ;
@@ -496,6 +531,20 @@ while true ; do  # {
   esac  # }
 done ;  # }
 
+
+  #############################################################################
+  # Do the remaining input validation here
+  #
+if [ $# -ne 1 ] ; then
+  echo "${ATTR_ERROR} no input filename was specified" ;
+  exit 2;
+fi
+
+check_and_build_directory '' "${G_VIDEO_OUT_DIR}" ;
+check_and_build_directory '' "${C_SUBTITLE_OUT_DIR}" ;
+check_and_build_directory '' "${C_SUBTITLE_IN_DIR}" ;
+
+check_and_build_directory '' "${C_FONTS_DIR}" ;
 
 ###############################################################################
 ###############################################################################
@@ -1139,7 +1188,7 @@ echo -n "${ATTR_BLUE_BOLD}<< " ;
 echo -n "'${ATTR_GREEN_BOLD}${G_IN_FILE}${ATTR_OFF}${ATTR_BLUE_BOLD}'"
 echo    " >>${ATTR_OFF} ..." ;
 
-if [ -s "${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then
+if [ -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then
   echo -n "  $(tput setaf 3 ; tput bold)COMPLETED$(tput sgr0; tput bold) "
   echo    "'${G_IN_FILE}'$(tput sgr0) ..." ;
   exit 0;
@@ -1420,7 +1469,7 @@ fi  # }
 ###############################################################################
 # This is where the hammer meets the road!
 #
-if [ ! -s "${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then  # {
+if [ ! -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then  # {
 
   RC=0 ;
   if   [ "${G_OPTION_NO_COMMENT}" = 'y' ] \
@@ -1433,7 +1482,7 @@ if [ ! -s "${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then  
               -crf ${C_FFMPEG_CRF} \
               -tune film -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} \
               "$@" \
-              "file:${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ;
+              "file:${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ;
     { RC=$? ; set +x ; } >/dev/null 2>&1
 
   else  # }{
@@ -1463,7 +1512,7 @@ HERE_DOC
               -tune film -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} \
               "$@" \
               -metadata "comment=${G_VIDEO_COMMENT}" \
-              "file:${C_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ;
+              "file:${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ;
     { RC=$? ; set +x ; } >/dev/null 2>&1
 
   fi  # }
