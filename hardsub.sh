@@ -203,15 +203,17 @@ trap 'exit_handler' EXIT ;
 #  - mkvtoolnix
 #  - sed + pcre2 (the library)
 #  - coreutils -- basename, cut, head, et. al.
-#  - grep, egrep
-#  - jq  (developed and tested with version 1.6)
-#  - dos2unix
+#  - grep       - which includes 'egrep' via script or hard-link to grep
+#  - bc         - for (re-)calculating font sizes
+#  - jq         - used to parse mkvmerge's json output
+#                 developed and tested with version 1.6
+#  - dos2unix   - ffmpeg builds a DOS file when converting SRT to ASS subtitles
 #  - bash shell - unless you're going with a really old distro, the version of
 #                 bash installed is probably modern enough for this script.
 #                 No special advanced bash features are intentionally used in
 #                 this script (except for array append, but that 1st appeared
-#                 in 3.1x or thereabouts).  This script used bash-5.1.0 in
-#                 its development.
+#                 in 3.1x or thereabouts).
+#                 This script used bash-5.1.0 in its development.
 #  - exiftool   - used in this script to get/copy metadata from the source
 #                 video to the re-encoded video.
 #                 exiftool is a perl script, so (obviously) perl needs to be
@@ -242,6 +244,7 @@ CUT='/usr/bin/cut' ;
 CP='/usr/bin/cp' ;
 FOLD='/usr/bin/fold' ;
 HEAD='/usr/bin/head' ;
+BC='/usr/bin/bc' ;
 EXIFTOOL='/usr/bin/exiftool' ;
 
   #############################################################################
@@ -289,6 +292,8 @@ G_OPTION_NO_METADATA='' ;       # Do NOT add any metadata in the re-encoding
 G_OPTION_NO_COMMENT='' ;        # Do NOT write a '-metadata comment='.  Other
                                 # metadata will be written if appropriate.
 G_OPTION_PRESETS=0 ;            # Number of preset selected on commandline.
+
+G_OPTION_SRT_FONT_SIZE=39 ;     # The Default font size for SRT subtitles
                                 # If > 1, we'll warn the user, otherwise ...
 G_OPTION_TITLE='' ;
 G_OPTION_ARTIST='' ;
@@ -298,9 +303,27 @@ G_VIDEO_OUT_DIR='OUT DIR' ;     # the re-encoded video's save location
 C_SUBTITLE_IN_DIR='IN SUBs' ;   # location for manually added subtitles
 
   #############################################################################
-  # Video filter setup area ...
+  # Video filter setup area ...  Still rough around the edges.
+  # TODO :: Should I roll up the 'C_VIDEO_PAD_FILTER' filter here?
   #
+G_PRE_VIDEO_FILTER='' ;
 G_POST_VIDEO_FILTER='' ;
+G_ZTE_FIX_FILENAMES=0 ; # Filter special character(s) from the filename (':').
+G_FLAC_PASSTHRU=0 ;     # Some devices support FLAC, so if the source is FLAC,
+                        # tell ffmpeg to pass it through (using '-c:a copy').
+G_OPTION_MONO=0 ;       # down sample the audio to mono
+
+  #############################################################################
+  # We'll re-encode the video to h264.
+  #
+  # BUT h264 has some size constraints that we have to “fix” from the input
+  # video (something about a odd number of rows or columns -- I don't remember
+  # the exact error message).  The easiest fix is to always apply the “fix”
+  # since on "correct" input videos, the fix will not have a negative effect.
+  #
+  # This may also happen when re-sizing a video.
+  #
+C_VIDEO_PAD_FILTER='pad=width=ceil(iw/2)*2:height=ceil(ih/2)*2' ; # The "fix"
 
 declare -a SED_SCRIPT_ARRAY=();
 
@@ -347,12 +370,7 @@ C_METADATA_COMMENT='' ;          # Search for this to modify what is included
                                  # date the video was encoded.
 
 ###############################################################################
-# We re-encode the video to h264.  BUT h264 has some size constraints that
-# we have to “fix” from the input video (something about a odd number of rows
-# or columns -- I don't remember the exact error message).  The easiest fix is
-# to always apply the “fix” since on "correct" input videos, the fix will not
-# have a negative effect.
-#
+# FIXME :: documentation spot for this info -->
 # Additional video filters should be added here if needed IAW ffmpeg's syntax
 # (that is, don't worry about escaping any shell special characters here).
 # Notes:
@@ -361,7 +379,6 @@ C_METADATA_COMMENT='' ;          # Search for this to modify what is included
 #  denoise, etc., you probably don't want those applied to the subtitles.
 # https://stackoverflow.com/questions/6195872/applying-multiple-filters-at-once-with-ffmpeg
 #
-C_VIDEO_FILTERS='pad=width=ceil(iw/2)*2:height=ceil(ih/2)*2' ; # The "fix"
 C_OUTPUT_CONTAINER='mp4' ; # Some older TVs may be able to read MKV files...
 
 G_SUBTITLE_PATHNAME='' ; # Built by this script
@@ -398,7 +415,6 @@ my_usage() {
 #
 ##  configure_preset "$1" "$2" "${G_OPTION_PRESETS}" ;
 configure_preset() {
-  set -x ;
   local my_option="$1" ; shift ;
   local my_preset="$1" ; shift ;
   local my_preset_count="$1" ; shift ;
@@ -409,10 +425,15 @@ configure_preset() {
       break ;
     fi
 
-# ffmpeg -y -i "3 Doors Down - It's Not My Time (CrawDad).mpg" -c:a libmp3lame -ab 320K -c:v libx264 -preset veryslow -crf 21 -tune film -vf transpose=2,scale=240:-1 test.mp4
     case "${my_preset}" in  # {
-    linkII|ZTE)
-      G_POST_VIDEO_FILTER='transpose=2,scale=240:-1' ;
+    linkII|ZTE|zte)
+      G_POST_VIDEO_FILTER='transpose=2' ;
+      G_PRE_VIDEO_FILTER='scale=640:-1' ;
+      G_ZTE_FIX_FILENAMES=1 ;
+      ;;
+    *)
+      echo "${ATTR_ERROR} unrecognized preset='${my_preset}'" ;
+      break ;
       ;;
     esac  # }
 
@@ -474,6 +495,48 @@ check_and_build_directory() {
   exit 1 ;
 }
 
+###############################################################################
+# This function takes a number and applies a percentage to it and returns the
+# new value as a string.
+#
+# This is a general purpose function that is mainly used to recalculate the
+# new size of a font based on a percentage.  This seems like a reasonable and
+# simple way to specify a new value as a percentage allows up to go above or
+# below the original value w/o having to worry about negative numbers.
+#
+apply_percentage() {
+  local in_number="$1" ; shift ;
+  local my_option="$1" ; shift ;
+  local in_percentage="$1" ; shift ;
+  local my_scale="$1" ; shift ;
+
+  ${DBG} echo "OPTION = '${my_option}', PERCENTAGE = '${my_percentage}'" >&2 ;
+
+  while : ; do  # {
+    if [ "${in_percentage}" = '' ] ; then  # Pedantic, I know ...
+      echo "${ATTR_ERROR} '${my_option}' requires a percentage value." >&2 ;
+      break ;
+    fi
+
+    local my_percentage="$(echo "${in_percentage}" | sed -e 's/%$//')" ;
+
+    local my_regex='^[0-9]+([.][0-9]+)?$' ;
+    if ! [[ "${my_percentage}" =~ ${my_regex} ]] ; then
+      echo "${ATTR_ERROR} '${my_option}=${in_percentage}' is not a number" ;
+      break ;
+    fi
+
+    echo "scale=${my_scale};${in_number} * (${my_percentage} / 100)" | ${BC} ;
+
+    return 0;
+  done ;  # }
+
+    ###########################################################################
+    # FAILURE :: exit; we've alredy printed an appropriate error message above.
+    #
+  exit 1 ;
+}
+
 
 ###############################################################################
 #
@@ -507,6 +570,7 @@ fi
 HS_OPTIONS=`getopt -o h::vc:f:yt:q: \
     --long help::,verbose,config:,fonts-dir:,copy-to:,quality:,\
 debug,\
+mono,\
 no-subs,\
 no-comment,\
 no-metadata,\
@@ -514,7 +578,7 @@ no-modify-srt,\
 no-fuzzy,\
 preset::,\
 out-dir::,\
-font-size:: \
+srt-font-size:: \
     -n "${ATTR_ERROR} ${ATTR_BLUE_BOLD}${MY_SCRIPT}${ATTR_YELLOW}" -- "$@"` ;
 
 if [ $? != 0 ] ; then
@@ -528,6 +592,9 @@ while true ; do  # {
   SEP=' ' ;
 
   case "$1" in  # {
+  --mono)
+    G_OPTION_MONO=1 ; shift ;
+    ;;
   --no-subs)
     G_OPTION_NO_SUBS='y' ; shift ;
     ;;
@@ -550,6 +617,15 @@ while true ; do  # {
     ;;
   --out-dir)
     G_VIDEO_OUT_DIR="$(check_and_build_directory "$1" "$2")" ;
+    shift 2;
+    ;;
+  --srt-font-size)
+    IN_SIZE="${G_OPTION_SRT_FONT_SIZE}" ;
+    G_OPTION_SRT_FONT_SIZE="$(apply_percentage "${G_OPTION_SRT_FONT_SIZE}" "$1" "$2" 1)" ;
+    echo -n "${ATTR_YELLOW_BOLD}  SETTING SubRip font size ${ATTR_CLR_BOLD}" ;
+    echo -n "(${IN_SIZE})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_SRT_FONT_SIZE}" ;
+    echo    "${ATTR_CLR_BOLD}.${ATTR_OFF}" ;
+      # TODO :: add a note about this to the comments IF the video really had SubRip subtitles
     shift 2;
     ;;
   --preset)
@@ -938,7 +1014,7 @@ apply_script_to_srt_subtitles() {
   #
   SED_SCRIPT_ARRAY=(
     '^Format: Name,.*'
-      'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding <==> Style: Default Italic,Open Sans Semibold,39,&H30FF00DD,&H000000FF,&H00101010,&H20A0A0A0,0,1,0,0,100,100,0,0,1,2.2,0,2,105,105,11,1'
+      'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding <==> Style: Default Italic,Open Sans Semibold,'"${G_OPTION_SRT_FONT_SIZE}"',&H30FF00DD,&H000000FF,&H00101010,&H20A0A0A0,0,1,0,0,100,100,0,0,1,2.2,0,2,105,105,11,1'
       #########################################################################
       # Normally, these are already specified correctly for an 'ASS' subtitle.
       # These are here for the cases where ffmpeg is used to convert a 'SRT'
@@ -951,7 +1027,7 @@ apply_script_to_srt_subtitles() {
         'PlayResY: 480'
 
     'Style: Default,.*'
-        'Style: Default,Open Sans Semibold,39,&H6000F8FF,&H000000FF,&H00101010,&H50A0A0A0,-1,0,0,0,100,100,0,0,1,2.75,0,2,100,100,12,1'
+        'Style: Default,Open Sans Semibold,'"${G_OPTION_SRT_FONT_SIZE}"',&H6000F8FF,&H000000FF,&H00101010,&H50A0A0A0,-1,0,0,0,100,100,0,0,1,2.75,0,2,100,100,12,1'
       #########################################################################
       # - Note that the necessary _replacement_ escapes are added by the MAIN
       #   script, i.e., the '&' character does not need to be and should NOT
@@ -1306,11 +1382,11 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
 
       [ "${G_OPTION_VERBOSE}" = 'y' ] && \
         echo "${ATTR_YELLOW_BOLD}FOUND AN SRT SUBTITLE$(tput sgr0).." ;
-      set -x ;
+      set -x ; # We want to KEEP this enabled.
       ${FFMPEG} -i "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" \
                    "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass" \
-          >/dev/null 2>&1 ; RC=$? ;
-      { set +x ; } >/dev/null 2>&1
+          >/dev/null 2>&1 ;
+      { RC=$? ; set +x ; } >/dev/null 2>&1
       if [ ${RC} -ne 0 ] ; then
         echo -n "${ATTR_ERROR} ${FFMPEG} -i " ;
         echo -n "'${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt' " ;
@@ -1413,7 +1489,7 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
             0 ;
 
       elif ( echo "${SUBTITLE_TRACK}" | ${GREP} -q "'subtitles' 'S_TEXT/UTF8'" ) ; then  # }{
-        echo "${ATTR_CYAN_BOLD}  SUB-RIP SUBTITLE FOUND IN VIDEO$(tput sgr0) ..." ;
+        echo "${ATTR_CYAN_BOLD}  SUBRIP SUBTITLE FOUND IN VIDEO$(tput sgr0) ..." ;
 
         extract_subtitle_track "${G_IN_FILE}" \
             "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" \
@@ -1479,10 +1555,15 @@ fi  # }
 
 
 ###############################################################################
-# Welcome to the wonderful world of shell escapes!  Pretty sure no personal
-# info will be added to the video's comments, and you can easily verify that
-# the comment is what you expected using VLC's Tools => Media Information or
-# exiftool (which is cross-platform, but requires perl to be installed).
+# Welcome to the wonderful world of shell escapes and building CLI strings!
+# I wish ffmpeg could append '-vf' filter arguments together -- maybe there's
+# a sound reason for why it doesn't, but it makes building '-vf' dynamically
+# quite the tickler.
+#
+# Pretty sure no personal info will be added to the video's comments, and
+# you can easily verify that the comment is what you expected using:
+#  - vlc media player => Tools => Media Information or
+#  - exiftool (which is cross-platform, but requires perl to be installed).
 #
 # There might be a cleaner/cleverer way to do this, but darn if I know how to!
 #
@@ -1491,14 +1572,22 @@ fi  # }
 #         since we want to use that mainly for the ffmpeg re-encoding options
 #         and NOT data that is easily viewable with other tools.
 #
+if [ "${G_PRE_VIDEO_FILTER}" != '' ] ; then
+  if [ "${C_VIDEO_PAD_FILTER}" = '' ] ; then
+     C_VIDEO_PAD_FILTER="${G_PRE_VIDEO_FILTER}" ;
+  else
+     C_VIDEO_PAD_FILTER="${G_PRE_VIDEO_FILTER},${C_VIDEO_PAD_FILTER}" ;
+  fi
+fi
+
 if [ "${G_SUBTITLE_PATHNAME}" = '' ] ; then  # {
-  if [ "${C_VIDEO_FILTERS}" = '' ] ; then
+  if [ "${C_VIDEO_PAD_FILTER}" = '' ] ; then
     eval set -- ; # Build an EMPTY eval just to keep the code simple ...
   else
-    C_FFMPEG_VIDEO_FILTERS="`echo "${C_VIDEO_FILTERS}" \
+    C_FFMPEG_VIDEO_FILTERS="`echo "${C_VIDEO_PAD_FILTER}" \
                 | ${SED} -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
                   # NOTE absence of ',' after the ':'
-    eval set -- "'-vf' ${C_FFMPEG_VIDEO_FILTERS}" ;
+    eval set -- "${C_FFMPEG_VIDEO_FILTERS}" ;
   fi
 else
   G_FFMPEG_SUBTITLE_FILENAME="`echo "${G_SUBTITLE_PATHNAME}" \
@@ -1506,31 +1595,41 @@ else
   G_FFMPEG_FONTS_DIR="`echo "${C_FONTS_DIR}" \
                 | ${SED} -e 's#\([][ :,()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
 
-  if [ "${C_VIDEO_FILTERS}" = '' ] ; then  # {
-    eval set -- "'-vf' subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}" ;
+  if [ "${C_VIDEO_PAD_FILTER}" = '' ] ; then  # {
+    eval set -- "subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}" ;
   else  # }{
-    C_FFMPEG_VIDEO_FILTERS="`echo "${C_VIDEO_FILTERS}" \
+    C_FFMPEG_VIDEO_FILTERS="`echo "${C_VIDEO_PAD_FILTER}" \
                 | ${SED} -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
                   # NOTE absence of ',' after the ':'
-    eval set -- "'-vf' ${C_FFMPEG_VIDEO_FILTERS},subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}" ;
+    eval set -- "${C_FFMPEG_VIDEO_FILTERS},subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}" ;
   fi  # }
 fi  # }
 
-#eval set -- "$@" ;
-echo '###########################################################################' ;
-echo "$@" ;
-echo "$#" ;
-echo '###########################################################################' ;
+# TODO :: description
 ARGs='' ;
+ARG_IDX=0;
+ARG_SPACE=' ';
 for ARG in "$@" ; do
-  ARGs="${ARGs}'${ARG}' ";
+  (( ARG_IDX++ ));
+  [[ ${ARG_IDX} -eq $# ]] && ARG_SPACE='' ;
+  ARGs="${ARGs}'${ARG}'${ARG_SPACE}";
 done
-eval set -- "${ARGs}${FFMPEG_METADATA}" ;
-echo '###########################################################################' ;
-echo "$@" ;
-echo "$#" ;
-echo '###########################################################################' ;
 
+# TODO :: description
+if [ "${G_POST_VIDEO_FILTER}" != '' ] ; then  # {
+  if [ "${ARGs}" = '' ] ; then
+    FFMPEG_FILTER_COMMA='' ;
+  else
+    FFMPEG_FILTER_COMMA=',' ;
+  fi
+fi  # }
+eval set -- "'-vf' ${ARGs}${FFMPEG_FILTER_COMMA}${G_POST_VIDEO_FILTER}${FFMPEG_METADATA}" ;
+
+# TODO :: description
+G_FFMPEG_AUDIO_CHANNELS='' ;
+if [ "${G_OPTION_MONO}" -eq 1 ] ; then
+  G_FFMPEG_AUDIO_CHANNELS='-ac 1' ;
+fi
 
 ###############################################################################
 # This is where the hammer meets the road!
@@ -1543,7 +1642,7 @@ if [ ! -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then  
 
     set -x ; # We want to KEEP this enabled.
     ${FFMPEG} -i "${G_IN_FILE}" \
-              -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K \
+              -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} \
               -c:v libx264 -preset ${C_FFMPEG_PRESET} \
               -crf ${C_FFMPEG_CRF} \
               -tune film -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} \
@@ -1563,7 +1662,7 @@ if [ ! -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then  
       G_VIDEO_COMMENT="`cat <<HERE_DOC
 Encoded on $(date)
 $(uname -sr ; ffmpeg -version | egrep '^ffmpeg ' | sed -e 's/version //' -e 's/ Copyright.*//')
-ffmpeg -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K -c:v libx264 -preset ${C_FFMPEG_PRESET} -crf ${C_FFMPEG_CRF} -tune film -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} $(echo $@ | ${SED} -e 's/[\\]//g' -e "s#${HOME}#\\\${HOME}#g" -e 's/ -metadata .*//')
+ffmpeg -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} -c:v libx264 -preset ${C_FFMPEG_PRESET} -crf ${C_FFMPEG_CRF} -tune film -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} $(echo $@ | ${SED} -e 's/[\\]//g' -e "s#${HOME}#\\\${HOME}#g" -e 's/ -metadata .*//')
 HERE_DOC
 `" ;
     else  # }{
@@ -1572,7 +1671,7 @@ HERE_DOC
 
     set -x ; # We want to KEEP this enabled.
     ${FFMPEG} -i "${G_IN_FILE}" \
-              -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K \
+              -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} \
               -c:v libx264 -preset ${C_FFMPEG_PRESET} \
               -crf ${C_FFMPEG_CRF} \
               -tune film -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} \
