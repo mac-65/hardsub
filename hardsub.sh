@@ -413,7 +413,6 @@ my_usage() {
 # apply to a specific playback device.  Examples might include always scaling
 # the video to the device's screen size, or other re-encoding attributes.
 #
-##  configure_preset "$1" "$2" "${G_OPTION_PRESETS}" ;
 configure_preset() {
   local my_option="$1" ; shift ;
   local my_preset="$1" ; shift ;
@@ -428,7 +427,23 @@ configure_preset() {
     case "${my_preset}" in  # {
     linkII|ZTE|zte)
       G_POST_VIDEO_FILTER='transpose=2' ;
+        #######################################################################
+        # Why use 640 when the phone is 2.8” (240x320)/1.7 (128x160)” TFT LCD?
+        # It has to do with the font scaling.  The font rendering at small
+        # point sizes is rough - it seems I get better results applying a font
+        # to a larger image and then letting the phone's HW scaler fit it to
+        # the display.  Downsides: larger file size and larger file size for
+        # videos w/o subtitles.  A possible solution is to smart-scale the
+        # video - if there is a subtitle, scale it larger, otherwise, scale to
+        # the device's native display size.
+        #
       G_PRE_VIDEO_FILTER='scale=640:-1' ;
+      G_SMART_SCALING=1 ; # TODO :: A marker for a future improvement.
+        #######################################################################
+        # Some filenames do NOT copy to the phone.  Not a lot of info about the
+        # exact filesystem on the phone, I suspect some version of NTFS?  Looks
+        # like a ':' in the filename breaks the copy (no useful error message).
+        #
       G_ZTE_FIX_FILENAMES=1 ;
       ;;
     *)
@@ -440,7 +455,6 @@ configure_preset() {
     return 0;
   done ;  # }
 
-      { set +x ; } >/dev/null 2>&1
   exit 1;
 }
 
