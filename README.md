@@ -66,6 +66,7 @@ die if anything is missing.
 - sed + pcre2 (the library)
 - coreutils -- basename, cut, head, et. al.
 - grep, egrep
+- bc - for (re-)calculating font sizes (<code>--srt-font-size</code>)
 - jq  (developed and tested with version 1.6)
 - dos2unix
 - bash shell - unless you're going with a really old distro, the version of

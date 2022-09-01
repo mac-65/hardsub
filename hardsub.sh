@@ -26,6 +26,11 @@ if false ; then
       fi ;
       tput sgr0 ; echo ;
     done ; cd /avm1/NO_RSYNC/MVs ;
+
+  ls *.flv *.avi *.mkv *.mp4 *.webm *.ts *.mpg *.vob 2>/dev/null \
+    | while read yy ; do
+      ./hardsub.sh --out-dir=ZTE --mono --preset=ZTE --srt-font-size=135% "${yy}" ;
+  done
 fi
 
 if false ; then
@@ -90,9 +95,6 @@ fi
 #
 ###############################################################################
 # TODO + FEATURES:
-#  - add --mono to downmix stereo to: mono (both channels), left or right only.
-#    This would be used for viewing a video and listening to the audio through
-#    an earpod using only one of the pods.
 #  - https://www.youtube.com/watch?v=F0B7HDiY-10
 #    Convert these to burn-able subtitles; Korean at the TOP, ENG on bottom.
 #
@@ -262,10 +264,10 @@ C_SCRIPT_NAME="$(basename "$0" '.sh')" ;
 # (e.g. my TV can't playback FLAC audio or h265 video streams).
 #
 C_FFMPEG_CRF=20 ;
-C_FFMPEG_PRESET='veryfast' ;    # Fast, used for batch script testing
-C_FFMPEG_PRESET='veryslow' ;    # Good quality w/good compression
+C_FFMPEG_PRESET_DBG='veryfast' ; # Fast, used for batch script --debug testing
+C_FFMPEG_PRESET_NOR='veryslow' ; # Good quality w/good compression
 C_FFMPEG_MP3_BITS=320 ;         # We'll convert the audio track to MP3
-C_FFMPEG_PIXEL_FORMAT='yuvj420p' ; # If it don't work, back to 'yuv420p'.
+C_FFMPEG_PIXEL_FORMAT='yuvj420p' ; # If it does NOT work, go back to 'yuv420p'.
                                 # https://news.ycombinator.com/item?id=20036710
 C_SUBTITLE_OUT_DIR='./SUBs' ;   # Where to save the extracted subtitle
 C_FONTS_DIR="${HOME}/.fonts" ;  # Where to save the font attachments
@@ -295,6 +297,7 @@ G_OPTION_PRESETS=0 ;            # Number of preset selected on commandline.
 
 G_OPTION_SRT_FONT_SIZE=39 ;     # The Default font size for SRT subtitles
                                 # If > 1, we'll warn the user, otherwise ...
+G_OPTION_SRT_FONT_NAME='Open Sans Semibold' ; # The font for SubRip subtitles
 G_OPTION_TITLE='' ;
 G_OPTION_ARTIST='' ;
 G_OPTION_GENRE='' ;
@@ -549,6 +552,14 @@ apply_percentage() {
     # FAILURE :: exit; we've alredy printed an appropriate error message above.
     #
   exit 1 ;
+}
+
+# XXXX
+###############################################################################
+#
+add_other_commandline_options() {
+  echo -n '' ;
+  #echo '-srt-font-size=130%' ;
 }
 
 
@@ -1028,7 +1039,7 @@ apply_script_to_srt_subtitles() {
   #
   SED_SCRIPT_ARRAY=(
     '^Format: Name,.*'
-      'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding <==> Style: Default Italic,Open Sans Semibold,'"${G_OPTION_SRT_FONT_SIZE}"',&H30FF00DD,&H000000FF,&H00101010,&H20A0A0A0,0,1,0,0,100,100,0,0,1,2.2,0,2,105,105,11,1'
+      'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding <==> Style: Default Italic,'"${G_OPTION_SRT_FONT_NAME}"','"${G_OPTION_SRT_FONT_SIZE}"',&H30FF00DD,&H000000FF,&H00101010,&H20A0A0A0,0,1,0,0,100,100,0,0,1,2.2,0,2,105,105,11,1'
       #########################################################################
       # Normally, these are already specified correctly for an 'ASS' subtitle.
       # These are here for the cases where ffmpeg is used to convert a 'SRT'
@@ -1041,7 +1052,7 @@ apply_script_to_srt_subtitles() {
         'PlayResY: 480'
 
     'Style: Default,.*'
-        'Style: Default,Open Sans Semibold,'"${G_OPTION_SRT_FONT_SIZE}"',&H6000F8FF,&H000000FF,&H00101010,&H50A0A0A0,-1,0,0,0,100,100,0,0,1,2.75,0,2,100,100,12,1'
+        'Style: Default,'"${G_OPTION_SRT_FONT_NAME}"','"${G_OPTION_SRT_FONT_SIZE}"',&H6000F8FF,&H000000FF,&H00101010,&H50A0A0A0,-1,0,0,0,100,100,0,0,1,2.75,0,2,100,100,12,1'
       #########################################################################
       # - Note that the necessary _replacement_ escapes are added by the MAIN
       #   script, i.e., the '&' character does not need to be and should NOT
@@ -1336,6 +1347,17 @@ if [ -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then
 fi
 
 
+  #############################################################################
+  # A little hack to speed up testing / development and save temporary files.
+  #
+if [ "${G_OPTION_DEBUG}" = '' ] ; then
+  C_FFMPEG_PRESET="${C_FFMPEG_PRESET_NOR}" ;
+else
+  C_FFMPEG_PRESET="${C_FFMPEG_PRESET_DBG}" ;
+fi
+
+
+###############################################################################
 ###############################################################################
 #   #####
 #  #     #  #    #  ####   #####  #  #####  #      #####   ####
@@ -1675,7 +1697,9 @@ if [ ! -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then  
     if [ "${C_METADATA_COMMENT}" = '' ] ; then  # {
       G_VIDEO_COMMENT="`cat <<HERE_DOC
 Encoded on $(date)
-$(uname -sr ; ffmpeg -version | egrep '^ffmpeg ' | sed -e 's/version //' -e 's/ Copyright.*//')
+$(uname -sr ;
+  ffmpeg -version | egrep '^ffmpeg ' | sed -e 's/version //' -e 's/ Copyright.*//' ;
+  add_other_commandline_options ;)
 ffmpeg -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} -c:v libx264 -preset ${C_FFMPEG_PRESET} -crf ${C_FFMPEG_CRF} -tune film -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} $(echo $@ | ${SED} -e 's/[\\]//g' -e "s#${HOME}#\\\${HOME}#g" -e 's/ -metadata .*//')
 HERE_DOC
 `" ;
