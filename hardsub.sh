@@ -29,7 +29,7 @@ if false ; then
 
   ls *.flv *.avi *.mkv *.mp4 *.webm *.ts *.mpg *.vob 2>/dev/null \
     | while read yy ; do
-      ./hardsub.sh --out-dir=ZTE --mono --preset=ZTE --srt-font-size=135% "${yy}" ;
+      ./hardsub.sh --out-dir=ZTE --mono --preset=ZTE --srt-font-size-percent=135% "${yy}" ;
   done
 fi
 
@@ -171,7 +171,15 @@ G_TMP_FILE='' ;
 ###############################################################################
 # Ctl-C, signals and exit handler stuff ...
 #
-stty -echoctl ; # hide '^C' on the terminal output
+stty -echoctl ;         # hide '^C' on the terminal output
+export HARDSUB_PID=$$ ; # I did NOT know about this :) ...
+
+abort() {
+   my_func="$1" ;
+   echo "Aborting from '${my_func}()'" >&2 ;
+   kill -s TERM $HARDSUB_PID ;
+}
+
 exit_handler() {
 
    [ "${G_OPTION_DEBUG}" = '' ] \
@@ -190,7 +198,7 @@ sigint_handler() {
    exit_handler ;
 
    tput setaf 1 ; tput bold ;
-   for yy in {01..03} ; do echo -n "${MY_REASON} BY USER  " ; done ;
+   for yy in {01..03} ; do echo -n "${MY_REASON} " ; done ;
    echo ; tput sgr0 ;
 
    exit 1 ;
@@ -205,6 +213,7 @@ trap 'exit_handler' EXIT ;
 #  - mkvtoolnix
 #  - sed + pcre2 (the library)
 #  - coreutils -- basename, cut, head, et. al.
+#  - fontconfig - Used to validate a fontname (e.g., '--srt-default-font=...)
 #  - grep       - which includes 'egrep' via script or hard-link to grep
 #  - bc         - for (re-)calculating font sizes
 #  - jq         - used to parse mkvmerge's json output
@@ -234,6 +243,7 @@ FFMPEG='ffmpeg -y -nostdin -hide_banner -loglevel info' ;
 MKVMERGE='/usr/bin/mkvmerge' ;
 MKVEXTRACT='/usr/bin/mkvextract' ;
 DOS2UNIX='/bin/dos2unix --force' ;
+FC_MATCH='/usr/bin/fc-match' ;
 GREP='/usr/bin/grep --text' ; # saves the embarrassing "binary file matches"
 AGREP='/usr/bin/agrep' ;
 AGREP_FUZZY_ITERS=6 ;  # Number of agrep passes to make
@@ -297,7 +307,8 @@ G_OPTION_PRESETS=0 ;            # Number of preset selected on commandline.
 
 G_OPTION_SRT_FONT_SIZE=39 ;     # The Default font size for SRT subtitles
                                 # If > 1, we'll warn the user, otherwise ...
-G_OPTION_SRT_FONT_NAME='Open Sans Semibold' ; # The font for SubRip subtitles
+G_OPTION_SRT_DEFAULT_FONT_NAME='Open Sans Semibold' ; # The font for SubRip subtitles
+G_OPTION_SRT_ITALICS_FONT_NAME="${G_OPTION_SRT_DEFAULT_FONT_NAME}" ;
 G_OPTION_TITLE='' ;
 G_OPTION_ARTIST='' ;
 G_OPTION_GENRE='' ;
@@ -509,8 +520,50 @@ check_and_build_directory() {
     ###########################################################################
     # FAILURE :: exit; we've alredy printed an appropriate error message above.
     #
-  exit 1 ;
+  abort ${FUNCNAME[0]} ;
 }
+
+###############################################################################
+# This function checks to see if the provided font is valid (as best it can).
+#   G_OPTION_SRT_DEFAULT_FONT_NAME="$(check_font_name "${G_OPTION_SRT_DEFAULT_FONT_NAME}" "$1" "$2" 0)" ;
+#
+check_font_name() {
+  local current_font_name="$1" ; shift ;
+  local my_option="$1" ; shift ;
+  local new_font_name="$1" ; shift ;
+  local try_2_validate="$1" ; shift ;
+
+  while : ; do  # {
+    if [ "${new_font_name}" = '' ] ; then  # Pedantic, I know ...
+      { echo -n "${ATTR_ERROR} '${ATTR_YELLOW_BOLD}${my_option}${ATTR_OFF}' " ;
+        echo    'requires a font name.' ; } >&2 ;
+      break ;
+    fi
+
+    set -x
+    # fc-match 'Open Sans semibold'
+    # fc-match ' '
+    # Vera.ttf: "Bitstream Vera Sans" "Regular"
+    # So, use /bin/cut -d':' to get the font's filename
+
+    local msg="$(${FC_MATCH} "${new_font_name}")" ;
+    echo "MSG = '${msg}'" >&2;
+
+    echo "${msg}" \
+        | sed -e 's/^.*:[ ][ ]*//' \
+              -e 's/"//g' \
+              -e 's/[ ][ ]*/ /g' \
+        ;
+
+    return 0;
+  done ;  # }
+
+    ###########################################################################
+    # FAILURE :: exit; we've alredy printed an appropriate error message above.
+    #
+  abort ${FUNCNAME[0]} ;
+}
+
 
 ###############################################################################
 # This function takes a number and applies a percentage to it and returns the
@@ -525,7 +578,7 @@ apply_percentage() {
   local in_number="$1" ; shift ;
   local my_option="$1" ; shift ;
   local in_percentage="$1" ; shift ;
-  local my_scale="$1" ; shift ;
+  local my_scale="$1" ; shift ; # number of digits right of the decimal point
 
   ${DBG} echo "OPTION = '${my_option}', PERCENTAGE = '${my_percentage}'" >&2 ;
 
@@ -551,15 +604,17 @@ apply_percentage() {
     ###########################################################################
     # FAILURE :: exit; we've alredy printed an appropriate error message above.
     #
-  exit 1 ;
+  abort ${FUNCNAME[0]} ;
 }
 
 # XXXX
 ###############################################################################
+# If not disabled, then echo out any other command line options which affect
+# the video's encoding (e.g., changing the font face and/or size).
 #
 add_other_commandline_options() {
   echo -n '' ;
-  #echo '-srt-font-size=130%' ;
+  #echo '-srt-font-size-percent=130%' ;
 }
 
 
@@ -603,7 +658,9 @@ no-modify-srt,\
 no-fuzzy,\
 preset::,\
 out-dir::,\
-srt-font-size:: \
+srt-default-font::,\
+srt-italics-font::,\
+srt-font-size-percent:: \
     -n "${ATTR_ERROR} ${ATTR_BLUE_BOLD}${MY_SCRIPT}${ATTR_YELLOW}" -- "$@"` ;
 
 if [ $? != 0 ] ; then
@@ -644,7 +701,18 @@ while true ; do  # {
     G_VIDEO_OUT_DIR="$(check_and_build_directory "$1" "$2")" ;
     shift 2;
     ;;
-  --srt-font-size)
+  --srt-default-font)
+    G_OPTION_SRT_DEFAULT_FONT_NAME="$(check_font_name "${G_OPTION_SRT_DEFAULT_FONT_NAME}" "$1" "$2" 1)" ;
+    G_OPTION_SRT_ITALICS_FONT_NAME="${G_OPTION_SRT_DEFAULT_FONT_NAME}" ;
+    echo "NEW 'Default' and 'Italics' FONT = '${G_OPTION_SRT_DEFAULT_FONT_NAME}'" ;
+    shift 2;
+    ;;
+  --srt-italics-font)
+    G_OPTION_SRT_ITALICS_FONT_NAME="$(check_font_name "${G_OPTION_SRT_DEFAULT_FONT_NAME}" "$1" "$2" 1)" ;
+    echo "NEW 'Italics' FONT = '${G_OPTION_SRT_ITALICS_FONT_NAME}'" ;
+    shift 2;
+    ;;
+  --srt-font-size-percent)
     IN_SIZE="${G_OPTION_SRT_FONT_SIZE}" ;
     G_OPTION_SRT_FONT_SIZE="$(apply_percentage "${G_OPTION_SRT_FONT_SIZE}" "$1" "$2" 1)" ;
     echo -n "${ATTR_YELLOW_BOLD}  SETTING SubRip font size ${ATTR_CLR_BOLD}" ;
@@ -1039,7 +1107,7 @@ apply_script_to_srt_subtitles() {
   #
   SED_SCRIPT_ARRAY=(
     '^Format: Name,.*'
-      'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding <==> Style: Default Italic,'"${G_OPTION_SRT_FONT_NAME}"','"${G_OPTION_SRT_FONT_SIZE}"',&H30FF00DD,&H000000FF,&H00101010,&H20A0A0A0,0,1,0,0,100,100,0,0,1,2.2,0,2,105,105,11,1'
+      'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding%%%x0aStyle: Italics,'"${G_OPTION_SRT_ITALICS_FONT_NAME}"','"${G_OPTION_SRT_FONT_SIZE}"',&H30FF00DD,&H000000FF,&H00101010,&H20A0A0A0,0,1,0,0,100,100,0,0,1,2.2,0,2,105,105,11,1'
       #########################################################################
       # Normally, these are already specified correctly for an 'ASS' subtitle.
       # These are here for the cases where ffmpeg is used to convert a 'SRT'
@@ -1052,7 +1120,7 @@ apply_script_to_srt_subtitles() {
         'PlayResY: 480'
 
     'Style: Default,.*'
-        'Style: Default,'"${G_OPTION_SRT_FONT_NAME}"','"${G_OPTION_SRT_FONT_SIZE}"',&H6000F8FF,&H000000FF,&H00101010,&H50A0A0A0,-1,0,0,0,100,100,0,0,1,2.75,0,2,100,100,12,1'
+        'Style: Default,'"${G_OPTION_SRT_DEFAULT_FONT_NAME}"','"${G_OPTION_SRT_FONT_SIZE}"',&H6000F8FF,&H000000FF,&H00101010,&H50A0A0A0,-1,0,0,0,100,100,0,0,1,2.75,0,2,100,100,12,1'
       #########################################################################
       # - Note that the necessary _replacement_ escapes are added by the MAIN
       #   script, i.e., the '&' character does not need to be and should NOT
@@ -1062,7 +1130,7 @@ apply_script_to_srt_subtitles() {
       #   Consider the following sed script pair (from a converted SRT file):
       #
     '^Dialogue: \(.*\),Default,\(.*\),{\\i1}\(.*\){\\i[0]*}$'
-        'Dialogue: %%%1,Default Italic,%%%2,%%%3'
+        'Dialogue: %%%1,Italics,%%%2,%%%3'
       #
       #   Its purpose is to detect a line that is all italic, and select a
       #   different style for that Dialogue line keeping everything else the
@@ -1100,7 +1168,6 @@ apply_script_to_srt_subtitles() {
       REPLACEMENT_STR=`echo "${SED_SCRIPT_ARRAY[$ido]}" \
           | ${SED} -e 's#\\\#\\\\\\\#g'   \
                    -e 's/,&H/,\\\\\&H/g'  \
-                   -e 's/ <==> /\\\\n/g'  \
                    -e 's/%%%/\\\/g'
                  `;
       echo -n '! ' ;
@@ -1178,7 +1245,7 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
   # think I've handled the ones I'm aware.  There might still be cases that
   # I missed (most probably), but I think this is pretty robust as it stands.
   #
-  SED_SCRIPT_ARRAY=( # HERE-HERE
+  SED_SCRIPT_ARRAY=(
 #   '^Format: Name,.*'
 #     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding'
 
@@ -1283,7 +1350,6 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
       REPLACEMENT_STR=`echo "${SED_SCRIPT_ARRAY[$ido]}" \
           | ${SED} -e 's#\\\#\\\\\\\#g'   \
                    -e 's/,&H/,\\\\\&H/g'  \
-                   -e 's/ <==> /\\\\n/g'  \
                    -e 's/%%%/\\\/g'
                  `;
       echo -n '! ' ;
