@@ -15,17 +15,19 @@ if false ; then
         echo -n '.' ;
         if [[ $? -ne 0 || "${TIMESTAMP_SRC}" > "${TIMESTAMP_DST}" ]] ; then
           /bin/cp -p "${yy}" "/run/media/${USER}/2TBBlue3/MVs/${yy}" ;
-          echo -n ". $(tput bold; tput setaf 5)UPDATE" ;
+          echo -n ". $(tput bold; tput setaf 5)UPDATED" ;
         else
-          echo -n ".. $(tput bold; tput setaf 2)DONE" ;
+          echo -n ".. $(tput bold; tput setaf 2)COMPLETED" ;
         fi
       else
         echo -n '.' ;
         /bin/cp -p "${yy}" "/run/media/${USER}/2TBBlue3/MVs/${yy}" ;
-        echo -n ". $(tput bold; tput blink; tput setaf 3)COPY" ;
+        echo -n ". $(tput bold; tput blink; tput setaf 3)NEW, COPY" ;
       fi ;
       tput sgr0 ; echo ;
     done ; cd /avm1/NO_RSYNC/MVs ;
+
+    ###########################################################################
 
   ls *.flv *.avi *.mkv *.mp4 *.webm *.ts *.mpg *.vob 2>/dev/null \
     | while read yy ; do
@@ -45,6 +47,10 @@ fi
 
 ###############################################################################
 # NOTE + TODO:
+# - https://stackoverflow.com/questions/592620/how-can-i-check-if-a-program-exists-from-a-bash-script
+#    command -v foo >/dev/null 2>&1 || { echo >&2 "I require foo but it's not installed.  Aborting."; exit 1; }
+#    type foo >/dev/null 2>&1 || { echo >&2 "I require foo but it's not installed.  Aborting."; exit 1; }
+#    hash foo 2>/dev/null || { echo >&2 "I require foo but it's not installed.  Aborting."; exit 1; }
 # - Is this what's happening to the older videos?
 #   https://forum.videohelp.com/threads/397242-FFMPEG-Interlaced-MPEG2-video-to-x264-Issue
 #
@@ -170,8 +176,12 @@ G_TMP_FILE='' ;
 ###############################################################################
 ###############################################################################
 # Ctl-C, signals and exit handler stuff ...
+# > To avoid the ‘stty: 'standard input': Inappropriate ioctl for device’
+#   message, we need to "protect" the ‘stty -echoctl’ command.
 #
-stty -echoctl ;         # hide '^C' on the terminal output
+if [[ -t 0 ]] ; then
+  stty -echoctl ;       # hide '^C' on the terminal output
+fi
 export HARDSUB_PID=$$ ; # I did NOT know about this :) ...
 
 abort() {
@@ -307,7 +317,10 @@ G_OPTION_PRESETS=0 ;            # Number of preset selected on commandline.
 
 G_OPTION_SRT_FONT_SIZE=39 ;     # The Default font size for SRT subtitles
                                 # If > 1, we'll warn the user, otherwise ...
-G_OPTION_SRT_DEFAULT_FONT_NAME='Open Sans Semibold' ; # The font for SubRip subtitles
+G_OPTION_SRT_DEFAULT_FONT_NAME='NimbusRoman-Regular' ; # The font for SubRip subtitles
+                                                       # from fc-match 'times'
+G_OPTION_SRT_DEFAULT_FONT_NAME='Open Sans'           ; # ANOTHER TEST
+G_OPTION_SRT_DEFAULT_FONT_NAME='Open Sans Semibold'  ; # The font for SubRip subtitles
 G_OPTION_SRT_ITALICS_FONT_NAME="${G_OPTION_SRT_DEFAULT_FONT_NAME}" ;
 G_OPTION_TITLE='' ;
 G_OPTION_ARTIST='' ;
@@ -527,8 +540,21 @@ check_and_build_directory() {
 # This function checks to see if the provided font is valid (as best it can).
 #   G_OPTION_SRT_DEFAULT_FONT_NAME="$(check_font_name "${G_OPTION_SRT_DEFAULT_FONT_NAME}" "$1" "$2" 0)" ;
 #
+# TODO :: CODE-UP :: looks like this might be a working solution 
+# 1. fc-match 'times' ; # << inputted from user, this provides a name
+#                            "Nimbus Roman" (we don't care about "Regular", etc),
+#                            and a font filename (NOT a pathname).
+# 2. fc-list "Nimbus Roman" | grep NimbusRoman-Regular.otf | head -1 ;
+#                            This gives us a pathname to work with now.
+#                            And finally, we can run 'fc-scan' on that pathname
+#                            to get the "fullname" to use in the ASS script.
+# 3. fc-scan '/usr/share/fonts/urw-base35/NimbusRoman-Regular.otf' \
+#          | grep 'fullname:' | sed -e 's/^.*: "//' -e 's/".*$//' ;
+#
+### YIELDS 'NimbusRoman-Regular' and it worked for "glee..."
+#
 check_font_name() {
-  local current_font_name="$1" ; shift ;
+  local current_name="$1" ; shift ;
   local my_option="$1" ; shift ;
   local new_font_name="$1" ; shift ;
   local try_2_validate="$1" ; shift ;
@@ -703,12 +729,11 @@ while true ; do  # {
     ;;
   --srt-default-font)
     G_OPTION_SRT_DEFAULT_FONT_NAME="$(check_font_name "${G_OPTION_SRT_DEFAULT_FONT_NAME}" "$1" "$2" 1)" ;
-    G_OPTION_SRT_ITALICS_FONT_NAME="${G_OPTION_SRT_DEFAULT_FONT_NAME}" ;
-    echo "NEW 'Default' and 'Italics' FONT = '${G_OPTION_SRT_DEFAULT_FONT_NAME}'" ;
+    echo "NEW 'Default' FONT = '${G_OPTION_SRT_DEFAULT_FONT_NAME}'" ;
     shift 2;
     ;;
   --srt-italics-font)
-    G_OPTION_SRT_ITALICS_FONT_NAME="$(check_font_name "${G_OPTION_SRT_DEFAULT_FONT_NAME}" "$1" "$2" 1)" ;
+    G_OPTION_SRT_ITALICS_FONT_NAME="$(check_font_name "${G_OPTION_SRT_ITALICS_FONT_NAME}" "$1" "$2" 1)" ;
     echo "NEW 'Italics' FONT = '${G_OPTION_SRT_ITALICS_FONT_NAME}'" ;
     shift 2;
     ;;
@@ -797,6 +822,13 @@ fi
 # process (e.g. coping a video specific tag to an audio only output file), but
 # since this script doesn't do those types of conversions, I'll skip it 4 now.
 #
+# TODO :: return codes : 0 = SUCCESS.
+#                        1 = ERROR
+#                        2 = Artist is available.  Artist is built from parsing
+#                            the "Artist - Title" and only if there is NO 'Artist'
+#                            already set in the video.  So call again to get the
+#                            cached 'Artist' string.
+#
 # So, basically if it's set in the video's source, don't override it:
 # - If 'in_title' is set (by the user), then use that for the video's title;
 # - if the video contains a title, then use that title (by returning an EMPTY
@@ -853,7 +885,7 @@ get_video_title() {
         # video.  Honestly, I dunno if this is the “proper” way to use agrep.
         #
       local fuzzy_errors=0 ;
-      for (( fuzz=1; fuzz <= ${AGREP_FUZZY_ITERS}; fuzz++ )); do
+      for (( fuzz=1; fuzz <= ${AGREP_FUZZY_ITERS}; fuzz++ )); do  # {
         echo "${in_filename}" \
           | ${AGREP} -${fuzz} -k -i -q "${title_in_video}" ;
         (( fuzzy_errors += $? )) ;
@@ -1348,10 +1380,10 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
       echo -n "${ATTR_GREEN_BOLD}." ;
       (( ido = idx + 1 )) ;
       REPLACEMENT_STR=`echo "${SED_SCRIPT_ARRAY[$ido]}" \
-          | ${SED} -e 's#\\\#\\\\\\\#g'   \
-                   -e 's/,&H/,\\\\\&H/g'  \
-                   -e 's/%%%/\\\/g'
-                 `;
+                    | ${SED} -e 's#\\\#\\\\\\\#g'   \
+                             -e 's/,&H/,\\\\\&H/g'  \
+                             -e 's/%%%/\\\/g'
+                      `;
       echo -n '! ' ;
 
       echo "s#${SED_SCRIPT_ARRAY[$idx]}#${REPLACEMENT_STR}#" \
