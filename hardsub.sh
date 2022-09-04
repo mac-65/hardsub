@@ -254,6 +254,8 @@ MKVMERGE='/usr/bin/mkvmerge' ;
 MKVEXTRACT='/usr/bin/mkvextract' ;
 DOS2UNIX='/bin/dos2unix --force' ;
 FC_MATCH='/usr/bin/fc-match' ;
+FC_LIST='/usr/bin/fc-list' ;
+FC_SCAN='/usr/bin/fc-scan' ;
 GREP='/usr/bin/grep --text' ; # saves the embarrassing "binary file matches"
 AGREP='/usr/bin/agrep' ;
 AGREP_FUZZY_ITERS=6 ;  # Number of agrep passes to make
@@ -540,21 +542,8 @@ check_and_build_directory() {
 # This function checks to see if the provided font is valid (as best it can).
 #   G_OPTION_SRT_DEFAULT_FONT_NAME="$(check_font_name "${G_OPTION_SRT_DEFAULT_FONT_NAME}" "$1" "$2" 0)" ;
 #
-# TODO :: CODE-UP :: looks like this might be a working solution 
-# 1. fc-match 'times' ; # << inputted from user, this provides a name
-#                            "Nimbus Roman" (we don't care about "Regular", etc),
-#                            and a font filename (NOT a pathname).
-# 2. fc-list "Nimbus Roman" | grep NimbusRoman-Regular.otf | head -1 ;
-#                            This gives us a pathname to work with now.
-#                            And finally, we can run 'fc-scan' on that pathname
-#                            to get the "fullname" to use in the ASS script.
-# 3. fc-scan '/usr/share/fonts/urw-base35/NimbusRoman-Regular.otf' \
-#          | grep 'fullname:' | sed -e 's/^.*: "//' -e 's/".*$//' ;
-#
-### YIELDS 'NimbusRoman-Regular' and it worked for "glee..."
-#
 check_font_name() {
-  local current_name="$1" ; shift ;
+  local old_font_name="$1" ; shift ;
   local my_option="$1" ; shift ;
   local new_font_name="$1" ; shift ;
   local try_2_validate="$1" ; shift ;
@@ -566,20 +555,47 @@ check_font_name() {
       break ;
     fi
 
-    set -x
-    # fc-match 'Open Sans semibold'
-    # fc-match ' '
-    # Vera.ttf: "Bitstream Vera Sans" "Regular"
-    # So, use /bin/cut -d':' to get the font's filename
+    ###########################################################################
+    # 1. Get the font's filename and the font's name returned from 'fc-match'.
+    #    We go through all of this effort to make it easy for the user to
+    #    specify a font name more casually, e.g. 'times' for a 'Times'-like
+    #    font that on Fedora linux is actually 'Nimbus Roman'.
+    #
+    local fc_match="$(${FC_MATCH} "${new_font_name}")" ;
+    if [ "${fc_match}" = "${G_INVALID_FONT_NAME}" ] ; then
+      {
+        echo -n "${ATTR_YELLOW_BOLD}`tput blink`WARNING - `tput sgr0; tput bold`" ;
+        echo -n "Unknown font name = '${ATTR_CYAN}${new_font_name}"
+        echo -ne "`tput sgr0; tput bold`',\n          "
+        echo    "${ATTR_MAGENTA}fontconfig will select some system default.`tput sgr0`"
+      } >&2 ;
+    fi
+    local font_filename="$(echo "${fc_match}" | cut -d':' -f1)" ;
+    local font_name="$(echo "${fc_match}" \
+                     | ${SED} -e 's/^.*: "//' -e 's/".*$//')" ;
 
-    local msg="$(${FC_MATCH} "${new_font_name}")" ;
-    echo "MSG = '${msg}'" >&2;
+    ###########################################################################
+    # 2. Get the pathname for the font file that is returned from 'fc-list'.
+    #    It's possible there could be more than 1 copy so we limit the result
+    #    to just the first record using 'head'.
+    #
+    local font_pathname="$(${FC_LIST} "${font_name}" \
+                         | ${GREP} "${font_filename}" \
+                         | cut -d':' -f1)" ;
 
-    echo "${msg}" \
-        | sed -e 's/^.*:[ ][ ]*//' \
-              -e 's/"//g' \
-              -e 's/[ ][ ]*/ /g' \
-        ;
+    ###########################################################################
+    # 3. Finally, get the 'fullname:' from the font's pathname from 'fc-scan'.
+    #    This __could__ match exactly what the user provided (and that's okay)
+    #    and gives some extra versatility to getting a working font name for
+    #    a subtitle script.  A user could specify "times" or "serif".
+    #   - If the font can't be matched through ffmpeg -> libass -> fontconfig,
+    #     rendering for those styles will NOT happen, so it's important to get
+    #     the exact font name for the Style in the Substation Alpha script.
+    #
+    new_font_name="$(${FC_SCAN} "${font_pathname}" \
+                   | ${GREP} 'fullname:' \
+                   | ${SED} -e 's/^.*: "//' -e 's/".*$//')" ;
+    echo "${new_font_name}" ;
 
     return 0;
   done ;  # }
@@ -614,7 +630,7 @@ apply_percentage() {
       break ;
     fi
 
-    local my_percentage="$(echo "${in_percentage}" | sed -e 's/%$//')" ;
+    local my_percentage="$(echo "${in_percentage}" | ${SED} -e 's/%$//')" ;
 
     local my_regex='^[0-9]+([.][0-9]+)?$' ;
     if ! [[ "${my_percentage}" =~ ${my_regex} ]] ; then
@@ -646,10 +662,12 @@ add_other_commandline_options() {
 
 ###############################################################################
 #
-my_set_system_variables() {
+initialize_variables() {
 
   G_OPTION_NO_SUBS='' ;
   G_OPTION_VERBOSE='' ;
+
+  G_INVALID_FONT_NAME="$(${FC_MATCH} '')" ;
 }
 
 if [ $# -eq 0 ] ; then
@@ -693,7 +711,7 @@ if [ $? != 0 ] ; then
    my_usage 1 ;
 fi
 
-my_set_system_variables ;
+initialize_variables ;
 
 eval set -- "${HS_OPTIONS}" ;
 while true ; do  # {
@@ -854,7 +872,7 @@ get_video_title() {
   else  # }{
     local title_in_video="$(${EXIFTOOL} "${in_filename}" \
                      | ${GREP} '^Title' \
-                     | sed -e 's/^.*: //')" ;
+                     | ${SED} -e 's/^.*: //')" ;
     if [ "${title_in_video}" = '' ] ; then  # {
         #######################################################################
         # There is no Title in the video, so make one from the filename.
@@ -867,8 +885,8 @@ get_video_title() {
         #
         ## FIXME -- I should do this filtering cleanup elsewhere ...
       out_title="$(echo "${in_video_basename}" \
-                   | ${SED} -e 's/[_+]/ /g'  \
-                   )" ;
+                 | ${SED} -e 's/[_+]/ /g'  \
+                 )" ;
     elif [ "${G_OPTION_NO_FUZZY}" = '' ] ; then  # }{
         #######################################################################
         # Okay, the source video has a 'Title' metadata tag set.  If the user
@@ -927,7 +945,7 @@ get_video_genre() {
 
     local genre_in_video="$(${EXIFTOOL} "${in_filename}" \
                      | ${GREP} '^Genre' \
-                     | sed -e 's/^.*: //')" ;
+                     | ${SED} -e 's/^.*: //')" ;
     if [ "${genre_in_video}" = '' ] ; then  # {
         #######################################################################
         # There is no Genre in the video, so use the default.
