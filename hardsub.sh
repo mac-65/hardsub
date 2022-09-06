@@ -143,33 +143,33 @@ fi
 #
 # https://stackoverflow.com/questions/965053/extract-filename-and-extension-in-bash
 #
-ATTR_OFF="`tput sgr0`" ;
-ATTR_BOLD="`tput bold`" ;
-ATTR_UNDL="`tput smul`" ;
-ATTR_BLINK="`tput blink`" ;
-ATTR_CLR_BOLD="${ATTR_OFF}${ATTR_BOLD}" ;
-ATTR_RED="${ATTR_OFF}`tput setaf 1`" ;
-ATTR_RED_BOLD="${ATTR_RED}${ATTR_BOLD}" ;
-ATTR_GREEN="${ATTR_OFF}`tput setaf 2;`" ;
-ATTR_GREEN_BOLD="${ATTR_GREEN}${ATTR_BOLD}" ;
-ATTR_YELLOW="${ATTR_OFF}`tput setaf 3`" ;
-ATTR_YELLOW_BOLD="${ATTR_YELLOW}${ATTR_BOLD}" ;
-ATTR_BLUE="${ATTR_OFF}`tput setaf 4`" ;
-ATTR_BLUE_BOLD="${ATTR_BLUE}${ATTR_BOLD}" ;
-ATTR_MAGENTA="${ATTR_OFF}`tput setaf 5`" ;
-ATTR_MAGENTA_BOLD="${ATTR_MAGENTA}${ATTR_BOLD}" ;
-ATTR_CYAN="${ATTR_OFF}`tput setaf 6`" ;
-ATTR_CYAN_BOLD="${ATTR_CYAN}${ATTR_BOLD}" ;
-ATTR_BROWN="${ATTR_OFF}`tput setaf 94`" ;
-ATTR_BROWN_BOLD="${ATTR_BROWN}${ATTR_BOLD}" ;
+export ATTR_OFF="`tput sgr0`" ;
+export ATTR_BOLD="`tput bold`" ;
+export ATTR_UNDL="`tput smul`" ;
+export ATTR_BLINK="`tput blink`" ;
+export ATTR_CLR_BOLD="${ATTR_OFF}${ATTR_BOLD}" ;
+export ATTR_RED="${ATTR_OFF}`tput setaf 1`" ;
+export ATTR_RED_BOLD="${ATTR_RED}${ATTR_BOLD}" ;
+export ATTR_GREEN="${ATTR_OFF}`tput setaf 2;`" ;
+export ATTR_GREEN_BOLD="${ATTR_GREEN}${ATTR_BOLD}" ;
+export ATTR_YELLOW="${ATTR_OFF}`tput setaf 3`" ;
+export ATTR_YELLOW_BOLD="${ATTR_YELLOW}${ATTR_BOLD}" ;
+export ATTR_BLUE="${ATTR_OFF}`tput setaf 4`" ;
+export ATTR_BLUE_BOLD="${ATTR_BLUE}${ATTR_BOLD}" ;
+export ATTR_MAGENTA="${ATTR_OFF}`tput setaf 5`" ;
+export ATTR_MAGENTA_BOLD="${ATTR_MAGENTA}${ATTR_BOLD}" ;
+export ATTR_CYAN="${ATTR_OFF}`tput setaf 6`" ;
+export ATTR_CYAN_BOLD="${ATTR_CYAN}${ATTR_BOLD}" ;
+export ATTR_BROWN="${ATTR_OFF}`tput setaf 94`" ;
+export ATTR_BROWN_BOLD="${ATTR_BROWN}${ATTR_BOLD}" ;
 OPEN_TIC='‘' ;
-ATTR_OPEN_TIC="${ATTR_CLR_BOLD}${OPEN_TIC}" ;
+export ATTR_OPEN_TIC="${ATTR_CLR_BOLD}${OPEN_TIC}" ;
 CLOSE_TIC='’' ;
-ATTR_CLOSE_TIC="${ATTR_CLR_BOLD}${CLOSE_TIC}${ATTR_OFF}" ;
+export ATTR_CLOSE_TIC="${ATTR_CLR_BOLD}${CLOSE_TIC}${ATTR_OFF}" ;
 
-ATTR_ERROR="${ATTR_RED_BOLD}ERROR -${ATTR_OFF}" ;
-ATTR_NOTE="${ATTR_OFF}`tput setaf 12`NOTE -${ATTR_OFF}";
-ATTR_TOOL="${ATTR_GREEN_BOLD}" ;
+export ATTR_ERROR="${ATTR_RED_BOLD}ERROR -${ATTR_OFF}" ;
+export ATTR_NOTE="${ATTR_OFF}`tput setaf 12`NOTE -${ATTR_OFF}";
+export ATTR_TOOL="${ATTR_GREEN_BOLD}" ;
 
 G_TMP_FILE='' ;
 
@@ -182,7 +182,7 @@ G_TMP_FILE='' ;
 if [[ -t 0 ]] ; then
   stty -echoctl ;       # hide '^C' on the terminal output
 fi
-export HARDSUB_PID=$$ ; # I did NOT know about this :) ...
+export HARDSUB_PID=$$ ; # I did NOT know about this one trick to exit :) ...
 
 abort() {
    my_func="$1" ;
@@ -318,12 +318,15 @@ G_OPTION_NO_COMMENT='' ;        # Do NOT write a '-metadata comment='.  Other
 G_OPTION_PRESETS=0 ;            # Number of preset selected on commandline.
 
 G_OPTION_SRT_FONT_SIZE=39 ;     # The Default font size for SRT subtitles
-                                # If > 1, we'll warn the user, otherwise ...
 G_OPTION_SRT_DEFAULT_FONT_NAME='NimbusRoman-Regular' ; # The font for SubRip subtitles
                                                        # from fc-match 'times'
 G_OPTION_SRT_DEFAULT_FONT_NAME='Open Sans'           ; # ANOTHER TEST
 G_OPTION_SRT_DEFAULT_FONT_NAME='Open Sans Semibold'  ; # The font for SubRip subtitles
 G_OPTION_SRT_ITALICS_FONT_NAME="${G_OPTION_SRT_DEFAULT_FONT_NAME}" ;
+
+G_OPTION_TRN_FONT_SIZE=39 ;     # The font size for Transcript subtitles
+G_OPTION_TRN_FONT_NAME='NimbusRoman-Regular' ; # Font for Transcript subtitles
+
 G_OPTION_TITLE='' ;
 G_OPTION_ARTIST='' ;
 G_OPTION_GENRE='' ;
@@ -338,6 +341,7 @@ C_SUBTITLE_IN_DIR='IN SUBs' ;   # location for manually added subtitles
 G_PRE_VIDEO_FILTER='' ;
 G_POST_VIDEO_FILTER='' ;
 G_ZTE_FIX_FILENAMES=0 ; # Filter special character(s) from the filename (':').
+G_SMART_SCALING=0 ;     # TODO :: A marker for a future improvement.
 G_FLAC_PASSTHRU=0 ;     # Some devices support FLAC, so if the source is FLAC,
                         # tell ffmpeg to pass it through (using '-c:a copy').
 G_OPTION_MONO=0 ;       # down sample the audio to mono
@@ -428,7 +432,7 @@ my_usage() {
 
   tput sgr0 ;
   echo "USAGE ::" ; # TODO :: add some help text
-  echo -n ' ls *.flv *.avi *.mkv *.mp4 *.webm *.ts *.mpg *.vob 2>/dev/null '
+  echo -n ' ls *.flv *.avi *.mkv *.mp4 *.webm *.ts *.mpg *.vob *.VOB 2>/dev/null '
   echo    '| while read yy ; do '$0' "${yy}" ; done' ;
 
   exit $L_RC ;
@@ -473,7 +477,7 @@ configure_preset() {
         # exact filesystem on the phone, I suspect some version of NTFS?  Looks
         # like a ':' in the filename breaks the copy (no useful error message).
         #
-      G_ZTE_FIX_FILENAMES=1 ;
+      G_ZTE_FIX_FILENAMES=1 ; # TODO :: A marker for future improvement(s).
       ;;
     *)
       echo "${ATTR_ERROR} unrecognized preset='${my_preset}'" ;
@@ -538,6 +542,7 @@ check_and_build_directory() {
   abort ${FUNCNAME[0]} ;
 }
 
+
 ###############################################################################
 # This function checks to see if the provided font is valid (as best it can).
 #   G_OPTION_SRT_DEFAULT_FONT_NAME="$(check_font_name "${G_OPTION_SRT_DEFAULT_FONT_NAME}" "$1" "$2" 0)" ;
@@ -559,7 +564,9 @@ check_font_name() {
     # 1. Get the font's filename and the font's name returned from 'fc-match'.
     #    We go through all of this effort to make it easy for the user to
     #    specify a font name more casually, e.g. 'times' for a 'Times'-like
-    #    font that on Fedora linux is actually 'Nimbus Roman'.
+    #    font that on Fedora linux is actually 'Nimbus Roman'.  Likewise,
+    #    'bookman' might return "URW Bookman" "Light" depending on what fonts
+    #    are installed with the distribution or by the user, etc.
     #
     local fc_match="$(${FC_MATCH} "${new_font_name}")" ;
     if [ "${fc_match}" = "${G_INVALID_FONT_NAME}" ] ; then
@@ -579,8 +586,9 @@ check_font_name() {
     #    It's possible there could be more than 1 copy so we limit the result
     #    to just the first record using 'head'.
     #
-    local font_pathname="$(${FC_LIST} "${font_name}" \
+    local font_pathname="$(${FC_LIST} "${font_name}"  \
                          | ${GREP} "${font_filename}" \
+                         | head -1                    \
                          | cut -d':' -f1)" ;
 
     ###########################################################################
@@ -649,6 +657,7 @@ apply_percentage() {
   abort ${FUNCNAME[0]} ;
 }
 
+
 # XXXX
 ###############################################################################
 # If not disabled, then echo out any other command line options which affect
@@ -669,6 +678,7 @@ initialize_variables() {
 
   G_INVALID_FONT_NAME="$(${FC_MATCH} '')" ;
 }
+
 
 if [ $# -eq 0 ] ; then
 
@@ -747,12 +757,12 @@ while true ; do  # {
     ;;
   --srt-default-font)
     G_OPTION_SRT_DEFAULT_FONT_NAME="$(check_font_name "${G_OPTION_SRT_DEFAULT_FONT_NAME}" "$1" "$2" 1)" ;
-    echo "NEW 'Default' FONT = '${G_OPTION_SRT_DEFAULT_FONT_NAME}'" ;
+    echo "  NEW 'Default' FONT = '${G_OPTION_SRT_DEFAULT_FONT_NAME}'" ;
     shift 2;
     ;;
   --srt-italics-font)
     G_OPTION_SRT_ITALICS_FONT_NAME="$(check_font_name "${G_OPTION_SRT_ITALICS_FONT_NAME}" "$1" "$2" 1)" ;
-    echo "NEW 'Italics' FONT = '${G_OPTION_SRT_ITALICS_FONT_NAME}'" ;
+    echo "  NEW 'Italics' FONT = '${G_OPTION_SRT_ITALICS_FONT_NAME}'" ;
     shift 2;
     ;;
   --srt-font-size-percent)
@@ -810,26 +820,10 @@ check_and_build_directory '' "${C_FONTS_DIR}" ;
 ###############################################################################
 ###############################################################################
 
-G_IN_FILE="$1" ; shift ;
+G_IN_VIDEO_FILE="$1" ; shift ;
 
-mkdir -p "${C_SUBTITLE_OUT_DIR}" ;
-if [ $? -ne 0 ] ; then
-   echo "${ATTR_ERROR} Can't make the subtitle directory!" ;
-   exit 1;
-fi
-
-G_IN_EXTENSION="${G_IN_FILE##*.}" ;
-G_IN_BASENAME="$(basename "${G_IN_FILE}" ".${G_IN_EXTENSION}")" ;
-
-
-###############################################################################
-# TODO :: make these (and other) proper command line args
-#
-if [ $# -ne 0 ] ; then
-    echo 'EXTRA ARGS' ;
-    C_FFMPEG_CRF="$1" ; shift ;
-    C_FFMPEG_MP3_BITS=192;
-fi
+G_IN_EXTENSION="${G_IN_VIDEO_FILE##*.}" ;
+G_IN_BASENAME="$(basename "${G_IN_VIDEO_FILE}" ".${G_IN_EXTENSION}")" ;
 
 
 ###############################################################################
@@ -1442,6 +1436,59 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
 
 
 ###############################################################################
+###############################################################################
+# convert_transcripts_to_ass "${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" \
+#                             ${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.*.txt ;
+#
+# Convert any transcript(s) for the video to Substation Alpha subtitles.
+#
+# Transcripts take precedence over any other subtitle format for the video.  I
+# wouldn't expect an already subtitled video to be accompanied by a transcript.
+#
+# The format of the transcript __filename__ follows the same convention of
+# any subtitle filename with the addition of the "base-style" identifier.
+# This identifier indicates the base style to assign to the lines in the
+# transcript file.  A transcript file can only support 1 base style.
+#
+# Example:
+#   'Eocene X - Kamloops & Shuswap w∕Jerome Lesemann [Nick Zentner] [Feb 12, 2022].English.txt'
+#
+# The above is the English transcript for the (does not appear to be ©) video,
+# and the 'Style:' that will be assigned is 'English', something like -->
+#
+#   Style: English,'"${G_OPTION_TRN_FONT_NAME}"','"${G_OPTION_TRN_FONT_SIZE}"',&H6000F8FF,&H000000FF,&H00101010,&H50A0A0A0,-1,0,0,0,100,100,0,0,1,2.75,0,2,100,100,12,1
+# ...
+#   Dialogue: 0,0:02:31.34,0:02:32.36,English,,0,0,0,,Thank you.
+#
+convert_transcripts_to_ass() {
+  set +x;
+  local subtitle_out_file="$1" ; shift ;
+
+    ###########################################################################
+    # If the subtitle file's already there and is not EMPTY, don't do anything.
+    #
+  [ -s "${subtitle_out_file}" ] && return 0 ;
+
+  msg="$(touch "${subtitle_out_file}" 2>&1)" ; RC=$? ; # 'local msg' borked.
+  if [ ${RC} -ne 0 ] ; then  # {
+    echo -n "${ATTR_ERROR} "
+    echo    "$(echo "${msg}" \
+           | ${SED} -e "s/^\(.*\)'\([^']*\)'\(.*\)/\1'`tput bold; tput setaf 3`\2`tput sgr0`'\3/")" ;
+    abort ${FUNCNAME[0]} ;
+  fi  # }
+
+# while [ $# -gt 0 ] ; do
+#    echo
+# done
+
+
+
+  { RC=$? ; set +x ; } >/dev/null 2>&1
+  return $RC;
+}
+
+
+###############################################################################
 #        #####
 #       #     #   #####    ##    #####    #####
 #       #           #     #  #   #    #     #
@@ -1453,12 +1500,12 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
 # main();
 #
 echo -n "${ATTR_BLUE_BOLD}<< " ;
-echo -n "'${ATTR_GREEN_BOLD}${G_IN_FILE}${ATTR_OFF}${ATTR_BLUE_BOLD}'"
+echo -n "'${ATTR_GREEN_BOLD}${G_IN_VIDEO_FILE}${ATTR_OFF}${ATTR_BLUE_BOLD}'"
 echo    " >>${ATTR_OFF} ..." ;
 
 if [ -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then
   echo -n "  $(tput setaf 3 ; tput bold)COMPLETED$(tput sgr0; tput bold) "
-  echo    "'${G_IN_FILE}'$(tput sgr0) ..." ;
+  echo    "'${G_IN_VIDEO_FILE}'$(tput sgr0) ..." ;
   exit 0;
 fi
 
@@ -1484,8 +1531,8 @@ fi
 #   #####    ####   ####     #    #    #    #####  #####   ####    ##  ##  ##
 #
 # Here are the subtitle rules:
-# - if '--no-subs' option is specified, any/all subtitles will be ignored and
-#   will not be hard-sub'd in the video during the re-encoding;
+# - if '--no-subs' option is specified, any/all transcripts/subtitles will be
+#   skipped and will not be hard-sub'd in the video during the re-encoding;
 # - next, MANUALLY added subtitles are checked (this allows for an overriding
 #   of a subtitle that may be attached with the video):
 #   . if there is a subtitle in 'C_SUBTITLE_IN_DIR' and it is NEWER than the
@@ -1502,7 +1549,7 @@ fi
 # - and finally, if the video contains a subtitle, then that subtitle is
 #   processed and used in the re-encoding of the video.
 #
-# None of the above will explicitely trigger a re-encoding of the video, only
+# None of the above will explicitly trigger a re-encoding of the video, only
 # a missing or out-of-date video will trigger the re-encoding process.  These
 # steps only determine if subtitles should be reprocessed for the re-encoding.
 #
@@ -1512,15 +1559,23 @@ fi
 #
 if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
 
-  if [ -s "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" ] ; then  # {
+  if [ "$( /bin/ls "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}".*.txt \
+        | /bin/wc -l )" != '0' ] ; then
+
+    echo 'Handle transcripts here ...?' ;
+    convert_transcripts_to_ass "${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" \
+                               "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}".*.txt ;
+
+##-dbg  G_SUBTITLE_PATHNAME="${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass"
+  elif [ -s "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" ] ; then  # }{
 
     ###########################################################################
     # See if this subtitle is NEWER than our previous version.  If the right
     # side of the '-nt' EXPRESSION is NOT there, then the test succeeds (i.e.,
-    # the file is __newer__ than the non-existant file).  This seems logical
+    # the file is __newer__ than the non-existent file).  This seems logical
     # and __maybe__ implied by the man page, but there is NO explicit example
     # of this in the man page (“An omitted EXPRESSION defaults to false”).
-    # Is a non-existant file considered an omitted EXPRESSION?
+    # Is a non-existent file considered an omitted EXPRESSION?
     #
     # Also, an expression using '-nt' is NOT reliable across different file-
     # system types because of the non-uniform increased timestamp resolution
@@ -1612,7 +1667,7 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
 
   else  # }{
 
-    SUBTITLE_TRACK="$(${MKVMERGE} -i -F json "${G_IN_FILE}" \
+    SUBTITLE_TRACK="$(${MKVMERGE} -i -F json "${G_IN_VIDEO_FILE}" \
         | jq '.tracks[]' \
         | jq -r '[.id, .type, .properties.codec_id, .properties.track_name, .properties.language]|@sh' \
         | ${GREP} "'subtitles' 'S_TEXT/" \
@@ -1624,7 +1679,7 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
       if ( echo "${SUBTITLE_TRACK}" | ${GREP} -q "'subtitles' 'S_TEXT/ASS'" ) ; then  # {
         echo "${ATTR_YELLOW_BOLD}  SUBSTATION ALPHA SUBTITLE FOUND IN VIDEO$(tput sgr0) ..." ;
 
-        extract_subtitle_track "${G_IN_FILE}" \
+        extract_subtitle_track "${G_IN_VIDEO_FILE}" \
             "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass" \
             "${SUBTITLE_TRACK}" ;
 
@@ -1636,14 +1691,14 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
             "${G_OPTION_ASS_SCRIPT}" ;
 
         extract_font_attachments \
-            "${G_IN_FILE}" \
+            "${G_IN_VIDEO_FILE}" \
             "${C_FONTS_DIR}" \
             0 ;
 
       elif ( echo "${SUBTITLE_TRACK}" | ${GREP} -q "'subtitles' 'S_TEXT/UTF8'" ) ; then  # }{
         echo "${ATTR_CYAN_BOLD}  SUBRIP SUBTITLE FOUND IN VIDEO$(tput sgr0) ..." ;
 
-        extract_subtitle_track "${G_IN_FILE}" \
+        extract_subtitle_track "${G_IN_VIDEO_FILE}" \
             "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" \
             "${SUBTITLE_TRACK}" ;
 
@@ -1665,7 +1720,7 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
             "${G_SUBTITLE_PATHNAME}" ;
 
         extract_font_attachments \
-            "${G_IN_FILE}" \
+            "${G_IN_VIDEO_FILE}" \
             "${C_FONTS_DIR}" \
             1 ;
 
@@ -1692,13 +1747,13 @@ fi  # }
 FFMPEG_METADATA='' ;
 if [ "${G_OPTION_NO_METADATA}" = '' ] ; then  # {
 
-  G_METADATA_TITLE="$(get_video_title "${G_IN_FILE}" "${G_OPTION_TITLE}" "${G_IN_BASENAME}")" ;
+  G_METADATA_TITLE="$(get_video_title "${G_IN_VIDEO_FILE}" "${G_OPTION_TITLE}" "${G_IN_BASENAME}")" ;
   if [ "${G_METADATA_TITLE}" != '' ] ; then  # {
     ## TODO :: split the artist / title here?
     FFMPEG_METADATA=" '-metadata' 'title=${G_METADATA_TITLE}'" ;
   fi  # }
 
-  G_METADATA_GENRE="$(get_video_genre "${G_IN_FILE}" "${G_OPTION_GENRE}" "${C_DEFAULT_GENRE}")" ;
+  G_METADATA_GENRE="$(get_video_genre "${G_IN_VIDEO_FILE}" "${G_OPTION_GENRE}" "${C_DEFAULT_GENRE}")" ;
   if [ "${G_METADATA_GENRE}" != '' ] ; then  # {
     FFMPEG_METADATA="${FFMPEG_METADATA} '-metadata' 'genre=${G_METADATA_GENRE}'" ;
   fi  # }
@@ -1793,7 +1848,7 @@ if [ ! -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then  
     || [ "${G_OPTION_NO_METADATA}" = 'y' ] ; then  # {
 
     set -x ; # We want to KEEP this enabled.
-    ${FFMPEG} -i "${G_IN_FILE}" \
+    ${FFMPEG} -i "${G_IN_VIDEO_FILE}" \
               -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} \
               -c:v libx264 -preset ${C_FFMPEG_PRESET} \
               -crf ${C_FFMPEG_CRF} \
@@ -1824,7 +1879,7 @@ HERE_DOC
     fi  # }
 
     set -x ; # We want to KEEP this enabled.
-    ${FFMPEG} -i "${G_IN_FILE}" \
+    ${FFMPEG} -i "${G_IN_VIDEO_FILE}" \
               -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} \
               -c:v libx264 -preset ${C_FFMPEG_PRESET} \
               -crf ${C_FFMPEG_CRF} \
@@ -1837,7 +1892,7 @@ HERE_DOC
   fi  # }
 else  # }{
 
-  echo "$(tput setaf 3 ; tput bold)COMPLETED$(tput sgr0; tput bold) '${G_IN_FILE}'$(tput sgr0) ..." ;
+  echo "$(tput setaf 3 ; tput bold)COMPLETED$(tput sgr0; tput bold) '${G_IN_VIDEO_FILE}'$(tput sgr0) ..." ;
   RC=0 ;
 fi  # }
 
