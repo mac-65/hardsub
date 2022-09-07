@@ -168,7 +168,7 @@ CLOSE_TIC='’' ;
 export ATTR_CLOSE_TIC="${ATTR_CLR_BOLD}${CLOSE_TIC}${ATTR_OFF}" ;
 
 export ATTR_ERROR="${ATTR_RED_BOLD}ERROR -${ATTR_OFF}" ;
-export ATTR_NOTE="${ATTR_OFF}`tput setaf 12`NOTE -${ATTR_OFF}";
+export ATTR_NOTE="${ATTR_OFF}`tput setaf 11`NOTE -${ATTR_OFF}";
 export ATTR_TOOL="${ATTR_GREEN_BOLD}" ;
 
 G_TMP_FILE='' ;
@@ -1448,21 +1448,38 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
 
 ###############################################################################
 ###############################################################################
-# local my_style="$(add_transcript_style_to_subtitle \
-#                          "${subtitle_file_out}" "${transcript}")" ;
+# add_transcript_style_to_subtitle subtitle_file_out transcript_file_in
+#
+# Copy the embedded style from the transcript file to the subtitle file.
+#
 add_transcript_style_to_subtitle() {
-  echo "in add_transcript_style_to_subtitle()" >&2 ;
 
   local subtitle_file_out="$1" ; shift ;
   local transcript_file_in="$1" ; shift ;
+  local style_in='' ;
+  local style_last='' ;
 
     ###########################################################################
+    # Copy through the embedded style and perform some basic validity checking.
     #
   ${GREP} '^#S' "${transcript_file_in}" \
-    | sed -e 's/^#S[ ]*//' \
-    | while read in_line ; do  # {
-      printf "%s\n" "${in_line}" >> "${subtitle_file_out}" ;
+    | ${SED} -e 's/^#S[ ]*//'              \
+    | while read text_line ; do  # {
+      printf "%s\n" "${text_line}" >> "${subtitle_file_out}" ;
+
+      echo "${text_line}" | ${GREP} -q '^Style: ' ; RC=$? ;
+      if [ "${RC}" -eq 0 ] ; then  # {
+         if [ "${style_last}" != '' ] ; then  # {
+           { echo -n "  ${ATTR_NOTE} Multiple '`tput bold`Style:`tput sgr0`'s detected, "
+             echo    "last was '${ATTR_CYAN}${style_last}${ATTR_OFF}' ..." ; } >&2 ;
+         fi  # }
+         style_in="$(echo "${text_line}"       \
+                   | ${SED} -e 's/,.*$//' -e 's/Style: //')" ;
+         style_last="${style_in}" ;
+      fi  # }
     done  # }
+
+  echo "${style_in}" ;
 
   return 0;
 }
@@ -1515,6 +1532,8 @@ convert_transcripts_to_ass() {
   set +x;
   local subtitle_file_out="$1" ; shift ;
 
+  local default_style='Transcript' ;
+
     ###########################################################################
     # If the subtitle file's already there and is not EMPTY, don't do anything.
     #
@@ -1542,7 +1561,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,${G_OPTION_TRN_ENGLISH_FONT_NAME},${G_OPTION_TRN_FONT_SIZE},&H6000F8FF,&H000000FF,&H00101010,&H50A0A0A0,-1,0,0,0,100,100,0,0,1,2.75,0,2,100,100,12,1
+Style: ${default_style},${G_OPTION_TRN_ENGLISH_FONT_NAME},${G_OPTION_TRN_FONT_SIZE},&H6000F8FF,&H000000FF,&H00101010,&H50A0A0A0,-1,0,0,0,100,100,0,0,1,2.75,0,2,100,100,12,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -1551,8 +1570,10 @@ HERE_DOC
   local number_of_embedded_styles=0 ;
 
   while [ $# -gt 0 ] ; do  # {
-    local transcript="$1" ; shift ;
-    echo "  >> FILE = '${transcript}' ..." ;
+    local transcript_file_in="$1" ; shift ;
+    local transcript_style="${default_style}" ;
+
+    echo "  >> FILE = '${transcript_file_in}' ..." ;
 
       #########################################################################
       # See if there's a style in the script.  We'll need to copy that FIRST
@@ -1564,24 +1585,43 @@ HERE_DOC
       # by this script.  There isn't any syntax checking on these, just some
       # very simple checks to catch potentially glaring errors.
       #
-      msg="$(${GREP} -c '^#S' "${transcript}" 2>&1)" ; RC=$? ;
+      # We'll check the final generated subtitle file for duplicate styles,
+      # as that is probably the most likely bug a user could introduce. TODO
+      #
+      msg="$(${GREP} -c '^#S' "${transcript_file_in}" 2>&1)" ; RC=$? ;
       if   [ ${RC} -eq 0 ] ; then  # {
         if [ ${msg} -lt 5 ] ; then  # {
-          echo ;
+          echo 'WARNING' ;
         fi  # }
         (( number_of_embedded_styles++ ))
-        local my_style="$(add_transcript_style_to_subtitle \
-                           "${subtitle_file_out}" "${transcript}")" ; RC=$? ;
-        if [ ${RC} -ne 0 ] ; then  # {
-          echo 'ERROR'
+        local style_in="$(add_transcript_style_to_subtitle \
+                           "${subtitle_file_out}" "${transcript_file_in}")" ; RC=$? ;
+        if [ ${RC} -ne 0 ] || [ "${style_in}" = '' ] ; then  # {
+          echo -n "  ${ATTR_NOTE} No 'Style:' was found in "
+          echo    "'${ATTR_YELLOW}${transcript_file_in}${ATTR_OFF}', using '${default_style}'" ;
+          style_in="${default_style}" ;
+        else  # }{
+          echo -n "  ${ATTR_GREEN_BOLD}ADDING ${ATTR_OFF}"
+          echo -n "'${ATTR_BLUE_BOLD}Style: ${style_in},…${ATTR_OFF}'"
+          echo    " found in '${ATTR_YELLOW}${transcript_file_in}${ATTR_OFF}' ..." ;
         fi  # }
+        transcript_style="${style_in}" ;
       elif [ ${RC} -eq 1 ] ; then  # }{
-       echo
+        # TODO :: should we allow multiple transcripts w/o any embedded styles?
+        #       i.e., just assign a default "new" style to each transcript file?
+        echo 'TODO, no Style:, just add a message about using the default style' ;
       else  # }{
-       echo
+        echo "${ATTR_ERROR} TODO" ;
+        abort ${FUNCNAME[0]} ;
       fi  # }
 
+    # TODO :: foreach transcript file, add the ability to run a sed
+    #         script to clean-up any "things" in the transcript before
+    #         adding the text to the subtitle file.  This could include
+    #         things like spelling corrections, capitalizations, etc.
   done  # }
+
+  # TODO :: check for duplicate 'Style:'s in the generated subtitle file
 
   { RC=$? ; set +x ; } >/dev/null 2>&1
   return $RC;
