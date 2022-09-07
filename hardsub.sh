@@ -285,12 +285,15 @@ C_SCRIPT_NAME="$(basename "$0" '.sh')" ;
 # These are chosen to the "least common denominator" for the playback device
 # (e.g. my TV can't playback FLAC audio or h265 video streams).
 #
-C_FFMPEG_CRF=20 ;
-C_FFMPEG_PRESET_DBG='veryfast' ; # Fast, used for batch script --debug testing
+C_FFMPEG_CRF_DBG=24 ;            # Fast, used for batch script --debug testing
+C_FFMPEG_PRESET_DBG='superfast'; # Fast, used for batch script --debug testing
+
+C_FFMPEG_CRF_NOR=20 ;            # Good quality w/good compression
 C_FFMPEG_PRESET_NOR='veryslow' ; # Good quality w/good compression
 C_FFMPEG_MP3_BITS=320 ;         # We'll convert the audio track to MP3
-C_FFMPEG_PIXEL_FORMAT='yuvj420p' ; # If it does NOT work, go back to 'yuv420p'.
+C_FFMPEG_PIXEL_FORMAT='yuvj420p'; # If it does NOT work, go back to 'yuv420p'.
                                 # https://news.ycombinator.com/item?id=20036710
+
 C_SUBTITLE_OUT_DIR='./SUBs' ;   # Where to save the extracted subtitle
 C_FONTS_DIR="${HOME}/.fonts" ;  # Where to save the font attachments
 
@@ -324,8 +327,13 @@ G_OPTION_SRT_DEFAULT_FONT_NAME='Open Sans'           ; # ANOTHER TEST
 G_OPTION_SRT_DEFAULT_FONT_NAME='Open Sans Semibold'  ; # The font for SubRip subtitles
 G_OPTION_SRT_ITALICS_FONT_NAME="${G_OPTION_SRT_DEFAULT_FONT_NAME}" ;
 
-G_OPTION_TRN_FONT_SIZE=39 ;     # The font size for Transcript subtitles
-G_OPTION_TRN_FONT_NAME='NimbusRoman-Regular' ; # Font for Transcript subtitles
+G_OPTION_TRN_FONT_SIZE=38 ;     # The font size for Transcript subtitles
+G_OPTION_TRN_ENGLISH_FONT_NAME='NimbusRoman-Regular' ; # Font for Transcript subtitles
+G_OPTION_TRN_IS_MUSIC='' ;      # The transcript is NOT music lyrics
+G_OPTION_TRN_MUSIC_CHARS='♩♪♫'; # https://www.alt-codes.net/music_note_alt_codes.php
+                                # If the user specifies '--trn-is-music', then
+                                # a musical note character will be added before
+                                # and after each line.  TODO
 
 G_OPTION_TITLE='' ;
 G_OPTION_ARTIST='' ;
@@ -358,7 +366,9 @@ G_OPTION_MONO=0 ;       # down sample the audio to mono
   #
 C_VIDEO_PAD_FILTER='pad=width=ceil(iw/2)*2:height=ceil(ih/2)*2' ; # The "fix"
 
-declare -a SED_SCRIPT_ARRAY=();
+unset SED_SCRIPT_ARRAY ;
+declare -a SED_SCRIPT_ARRAY=(); # There's some question if this is global if
+                                # declared in an initializer function.
 
   #############################################################################
   # We'll encode the input video using a MP4 container.  According to
@@ -712,6 +722,7 @@ no-modify-srt,\
 no-fuzzy,\
 preset::,\
 out-dir::,\
+trn-is-music,\
 srt-default-font::,\
 srt-italics-font::,\
 srt-font-size-percent:: \
@@ -1437,39 +1448,79 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
 
 ###############################################################################
 ###############################################################################
+# local my_style="$(add_transcript_style_to_subtitle \
+#                          "${subtitle_file_out}" "${transcript}")" ;
+add_transcript_style_to_subtitle() {
+  echo "in add_transcript_style_to_subtitle()" >&2 ;
+
+  local subtitle_file_out="$1" ; shift ;
+  local transcript_file_in="$1" ; shift ;
+
+    ###########################################################################
+    #
+  ${GREP} '^#S' "${transcript_file_in}" \
+    | sed -e 's/^#S[ ]*//' \
+    | while read in_line ; do  # {
+      printf "%s\n" "${in_line}" >> "${subtitle_file_out}" ;
+    done  # }
+
+  return 0;
+}
+
+
+###############################################################################
 # convert_transcripts_to_ass "${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" \
-#                             ${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.*.txt ;
+#                             ${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}*.txt ;
 #
 # Convert any transcript(s) for the video to Substation Alpha subtitles.
 #
-# Transcripts take precedence over any other subtitle format for the video.  I
-# wouldn't expect an already subtitled video to be accompanied by a transcript.
+# Transcripts take precedence over any other subtitle format for the video.
+# I don't expect an already subtitled video to be accompanied by a transcript.
+#
+# This script supports two methods of adding transcript subtitles to a video:
+# 1. Only 1 transcript file in one language.
+#    This is meant to be the simplest method - simply name the basename of the
+#    transcript file with the '.txt' extension.  No special editing of the
+#    transcript file is necessary -- kinda ‘plug n play’.
+#    Embedded 'Style:' lines are honoured, but are not required and the
+#    built-in 'Style:' will be used.
+# 2. Multiple transcript files.
+#    These files are named as basename*.txt __only__ so that this script can
+#    find the transcripts belonging to the video.
+#    Otherwise, no special significance is applied to their names.
+#   - Exactly one of the transcript files can be missing the Embedded 'Style:'
+#     lines, a warning is issued otherwise.
 #
 # The format of the transcript __filename__ follows the same convention of
 # any subtitle filename with the addition of the "base-style" identifier.
 # This identifier indicates the base style to assign to the lines in the
 # transcript file.  A transcript file can only support 1 base style.
 #
-# Example:
-#   'Eocene X - Kamloops & Shuswap w∕Jerome Lesemann [Nick Zentner] [Feb 12, 2022].English.txt'
+# Example of a SINGLE transcript filename¹:
+#   'Eocene X - Kamloops & Shuswap w∕Jerome Lesemann [Nick Zentner] [Feb 12, 2022].txt'
+# Example of a MULTIPLE transcript filenames:
+#   'Eocene X - Kamloops & Shuswap w∕Jerome Lesemann [Nick Zentner] [Feb 12, 2022]-English.txt'
+#   'Eocene X - Kamloops & Shuswap w∕Jerome Lesemann [Nick Zentner] [Feb 12, 2022]-2.txt'
 #
 # The above is the English transcript for the (does not appear to be ©) video,
 # and the 'Style:' that will be assigned is 'English', something like -->
 #
-#   Style: English,'"${G_OPTION_TRN_FONT_NAME}"','"${G_OPTION_TRN_FONT_SIZE}"',&H6000F8FF,&H000000FF,&H00101010,&H50A0A0A0,-1,0,0,0,100,100,0,0,1,2.75,0,2,100,100,12,1
+#   Style: English,'"${G_OPTION_TRN_ENGLISH_FONT_NAME}"','"${G_OPTION_TRN_FONT_SIZE}"',&H6000F8FF,&H000000FF,&H00101010,&H50A0A0A0,-1,0,0,0,100,100,0,0,1,2.75,0,2,100,100,12,1
 # ...
 #   Dialogue: 0,0:02:31.34,0:02:32.36,English,,0,0,0,,Thank you.
 #
+# ¹This does not appear to be ©.
+#
 convert_transcripts_to_ass() {
   set +x;
-  local subtitle_out_file="$1" ; shift ;
+  local subtitle_file_out="$1" ; shift ;
 
     ###########################################################################
     # If the subtitle file's already there and is not EMPTY, don't do anything.
     #
-  [ -s "${subtitle_out_file}" ] && return 0 ;
+  [ -s "${subtitle_file_out}" ] && return 0 ;
 
-  msg="$(touch "${subtitle_out_file}" 2>&1)" ; RC=$? ; # 'local msg' borked.
+  msg="$(touch "${subtitle_file_out}" 2>&1)" ; RC=$? ; # 'local msg' is borked?
   if [ ${RC} -ne 0 ] ; then  # {
     echo -n "${ATTR_ERROR} "
     echo    "$(echo "${msg}" \
@@ -1477,11 +1528,60 @@ convert_transcripts_to_ass() {
     abort ${FUNCNAME[0]} ;
   fi  # }
 
-# while [ $# -gt 0 ] ; do
-#    echo
-# done
+  #############################################################################
+  # Build the "header" for the Substation Alpha subtitle ...
+  # We include the possibly unused 'Style: Default,' as it's easy to do ☺.
+  #
+  cat << HERE_DOC > "${subtitle_file_out}" ;
+[Script Info]
+; Script generated by ${MY_SCRIPT} on `date`
+ScriptType: v4.00+
+PlayResX: 1280
+PlayResY: 720
+ScaledBorderAndShadow: yes
 
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,${G_OPTION_TRN_ENGLISH_FONT_NAME},${G_OPTION_TRN_FONT_SIZE},&H6000F8FF,&H000000FF,&H00101010,&H50A0A0A0,-1,0,0,0,100,100,0,0,1,2.75,0,2,100,100,12,1
 
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+HERE_DOC
+
+  local number_of_embedded_styles=0 ;
+
+  while [ $# -gt 0 ] ; do  # {
+    local transcript="$1" ; shift ;
+    echo "  >> FILE = '${transcript}' ..." ;
+
+      #########################################################################
+      # See if there's a style in the script.  We'll need to copy that FIRST
+      # before we begin to add the Dialogue text.  A script should only have 1
+      # style; all but the last will be ignored if they're the same style.
+      #
+      # An embedded style must have the above (last) FIVE lines fully detailed
+      # with all of the necessary fields -- there isn't any substitutions done
+      # by this script.  There isn't any syntax checking on these, just some
+      # very simple checks to catch potentially glaring errors.
+      #
+      msg="$(${GREP} -c '^#S' "${transcript}" 2>&1)" ; RC=$? ;
+      if   [ ${RC} -eq 0 ] ; then  # {
+        if [ ${msg} -lt 5 ] ; then  # {
+          echo ;
+        fi  # }
+        (( number_of_embedded_styles++ ))
+        local my_style="$(add_transcript_style_to_subtitle \
+                           "${subtitle_file_out}" "${transcript}")" ; RC=$? ;
+        if [ ${RC} -ne 0 ] ; then  # {
+          echo 'ERROR'
+        fi  # }
+      elif [ ${RC} -eq 1 ] ; then  # }{
+       echo
+      else  # }{
+       echo
+      fi  # }
+
+  done  # }
 
   { RC=$? ; set +x ; } >/dev/null 2>&1
   return $RC;
@@ -1515,8 +1615,10 @@ fi
   #
 if [ "${G_OPTION_DEBUG}" = '' ] ; then
   C_FFMPEG_PRESET="${C_FFMPEG_PRESET_NOR}" ;
+  C_FFMPEG_CRF="${C_FFMPEG_CRF_NOR}" ;
 else
   C_FFMPEG_PRESET="${C_FFMPEG_PRESET_DBG}" ;
+  C_FFMPEG_CRF="${C_FFMPEG_CRF_DBG}" ;
 fi
 
 
@@ -1559,12 +1661,12 @@ fi
 #
 if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
 
-  if [ "$( /bin/ls "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}".*.txt \
+  if [ "$( /bin/ls "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}"*.txt 2>/dev/null \
         | /bin/wc -l )" != '0' ] ; then
 
     echo 'Handle transcripts here ...?' ;
     convert_transcripts_to_ass "${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" \
-                               "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}".*.txt ;
+                               "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}"*.txt ;
 
 ##-dbg  G_SUBTITLE_PATHNAME="${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass"
   elif [ -s "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" ] ; then  # }{
