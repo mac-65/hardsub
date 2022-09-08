@@ -1440,6 +1440,8 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
     # including the invisible terminal control codes!  So I had to guesstimate
     # a bit about the correct width to use.  It's a hack to keep the display
     # width to about 76 __visible__ columns ...
+    # TODO :: It shouldn't be too hard to dynamically calculate this value on
+    #         the current terminal, amiright?
     #
   } | ${FOLD} --width=360 --spaces \
     | sed -e 's/^/    /' ;
@@ -1448,7 +1450,122 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
 
 ###############################################################################
 ###############################################################################
-# add_transcript_style_to_subtitle subtitle_file_out transcript_file_in
+# line_to_seconds="$(my_strptime ${my_state} "${current_text}")" ; RC=$? ;
+#
+# Working with time in shell script is a B***h at best.
+# I think this solution is okay.
+#
+# Returns:
+#  0 - is a valid timestamp, the seconds is returned as a string.
+#  1 - not a timestamp, s/b the script
+#  2 - some sort of fatal error (will I even need this?)
+#
+my_strptime() {
+
+  local in_state="$1" ; shift ;
+  local in_line="$1" ; shift ;
+  local ts_pad='' ;
+
+    ###########################################################################
+    # We'll use grep to match the timestamp pattern, then 'date -d' with the
+    # adjusted pattern to actually validate the timestamp itself.  Duuno if
+    # there's a less round-about way to do this, but the 'net didn't seem to
+    # have a matching solution.
+    #
+    # Really, the timestamp lines should be well formed, but I have to do this
+    # strict matching so as to not confuse the timestamp line with a text line.
+    #
+    # First, we'll try the '00:00' pattern to see if there's a hit.
+    #
+  echo "${in_line}" | ${GREP} -q '^[0-9]\{1,2\}:[0-9][0-9]$' ; RC=$? ;
+  if [ ${RC} -eq 0 ] ; then  # {
+    ts_pad='00:' ; # It's the '00:00' pattern, so add the hours padding ...
+  fi  # }
+
+  ts_seconds="$(date -d "${ts_pad}${in_line}" '+%s' 2>/dev/null)" ; RC=$? ;
+  if [ ${RC} -eq 0 ] ; then  # {
+    echo "${ts_seconds}" ;
+  else  # }{
+    :
+  fi  # }
+
+  return $RC;
+}
+
+
+###############################################################################
+# add_transcript_text_to_subtitle  subtitle_file_out  transcript_file_in  style
+#
+# We'll use a *very* simple state machine to roll up the transcript into
+# the subtitle file.
+#
+# 0:05
+# hi everybody good morning how's it going today
+# 11:04
+# because i don't have to yell either right now
+# 1:02:18
+# that's a t there's a lower plate
+#
+# TO:
+#
+# Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+# Dialogue: 0,0:00:36.54,0:00:40.92,Default1,,0,0,0,,♪ Sleep alone tonight ♪
+#
+add_transcript_text_to_subtitle() {
+
+  local subtitle_file_out="$1" ; shift ;
+  local transcript_file_in="$1" ; shift ;
+  local transcript_style="$1" ; shift ;
+
+  local lines_processed=0 ; # TODO :: keep track of lines ...
+  local current_text='' ;
+  local previous_text='' ;
+
+  echo >&2 "  IN ${FUNCNAME[0]} ..." ;
+  echo >&2 "  TR '${transcript_file_in}' ..." ;
+
+  local my_state=0 ; # 0 = looking for timestamp
+                     # 1 = looking for text line
+
+    ###########################################################################
+    # Walk through the transcript file:
+    # - grep to remove any "magic" lines (#S, #H, etc.); and
+    # - sed to trim the line of leading / trailing SPACEs.
+    #
+  cat "${transcript_file_in}"       \
+    | egrep -v '^#|^exit 0'         \
+    | ${SED} -e 's/^[[:space:]]*//' \
+             -e 's/[[:space:]]*$//' \
+    | while read current_text ; do  # {
+
+       echo >&2 "  >> CURR = '${current_text}'" ;
+
+       if [ ${my_state} -eq 0 ] ; then  # {
+          if [ "${current_text}" = '' ] ; then  # {
+            echo 'OKAY SKIPPING BLANK LINE' >&2 ;
+            continue ;
+          fi  # }
+       else  # }{
+         echo
+       fi  # }
+
+       if [ "${previous_text}" != '' ] ; then  # {
+          # FIXME -- this is in wrong place
+          echo 'OKAY, if this is a TIMESTAMP, now dump out the previous line as a formatted Dialogue:' ;
+       fi  # }
+
+       line_to_seconds="$(my_strptime ${my_state} "${current_text}")" ; RC=$? ;
+       if [ ${RC} -eq 0 ] ; then  # {
+         echo >&2 "FOUND A TIMESTAME = '${line_to_seconds}'" ;
+       else  # }{
+         :
+       fi  # }
+    done  # }
+}
+
+
+###############################################################################
+# add_transcript_style_to_subtitle  subtitle_file_out  transcript_file_in
 #
 # Copy the embedded style from the transcript file to the subtitle file.
 #
@@ -1619,6 +1736,11 @@ HERE_DOC
     #         script to clean-up any "things" in the transcript before
     #         adding the text to the subtitle file.  This could include
     #         things like spelling corrections, capitalizations, etc.
+
+###############################################################################
+    add_transcript_text_to_subtitle "${subtitle_file_out}"  \
+                                    "${transcript_file_in}" \
+                                    "${transcript_style}";
   done  # }
 
   # TODO :: check for duplicate 'Style:'s in the generated subtitle file
