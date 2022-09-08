@@ -171,7 +171,8 @@ export ATTR_ERROR="${ATTR_RED_BOLD}ERROR -${ATTR_OFF}" ;
 export ATTR_NOTE="${ATTR_OFF}`tput setaf 11`NOTE -${ATTR_OFF}";
 export ATTR_TOOL="${ATTR_GREEN_BOLD}" ;
 
-G_TMP_FILE='' ;
+export G_SED_FILE='' ;
+export G_TRN_FILE='' ; # Unused for now ...
 
 ###############################################################################
 ###############################################################################
@@ -193,8 +194,11 @@ abort() {
 exit_handler() {
 
    [ "${G_OPTION_DEBUG}" = '' ] \
-       && [ -f "${G_TMP_FILE}" ] \
-       && /bin/rm -f "${G_TMP_FILE}" ;
+       && [ -f "${G_SED_FILE}" ] \
+       && /bin/rm -f "${G_SED_FILE}" ;
+   [ "${G_OPTION_DEBUG}" = '' ] \
+       && [ -f "${G_TRN_FILE}" ] \
+       && /bin/rm -f "${G_TRN_FILE}" ;
 }
 
 sigint_handler() {
@@ -225,7 +229,7 @@ trap 'exit_handler' EXIT ;
 #  - coreutils -- basename, cut, head, et. al.
 #  - fontconfig - Used to validate a fontname (e.g., '--srt-default-font=...)
 #  - grep       - which includes 'egrep' via script or hard-link to grep
-#  - bc         - for (re-)calculating font sizes
+#  - bc         - for (re-)calculating font sizes (floating point math)
 #  - jq         - used to parse mkvmerge's json output
 #                 developed and tested with version 1.6
 #  - dos2unix   - ffmpeg builds a DOS file when converting SRT to ASS subtitles
@@ -256,6 +260,7 @@ DOS2UNIX='/bin/dos2unix --force' ;
 FC_MATCH='/usr/bin/fc-match' ;
 FC_LIST='/usr/bin/fc-list' ;
 FC_SCAN='/usr/bin/fc-scan' ;
+DATE='/usr/bin/date' ;
 GREP='/usr/bin/grep --text' ; # saves the embarrassing "binary file matches"
 AGREP='/usr/bin/agrep' ;
 AGREP_FUZZY_ITERS=6 ;  # Number of agrep passes to make
@@ -269,6 +274,8 @@ CP='/usr/bin/cp' ;
 FOLD='/usr/bin/fold' ;
 HEAD='/usr/bin/head' ;
 BC='/usr/bin/bc' ;
+WC='/usr/bin/wc' ;
+STAT='/usr/bin/stat --printf="%s"' ;
 EXIFTOOL='/usr/bin/exiftool' ;
 
   #############################################################################
@@ -332,9 +339,14 @@ G_OPTION_TRN_ENGLISH_FONT_NAME='NimbusRoman-Regular' ; # Font for Transcript sub
 G_OPTION_TRN_IS_MUSIC='' ;      # The transcript is NOT music lyrics
 G_OPTION_TRN_MUSIC_CHARS='♩♪♫'; # https://www.alt-codes.net/music_note_alt_codes.php
                                 # If the user specifies '--trn-is-music', then
-                                # a musical note character will be added before
-                                # and after each line.  TODO
-
+                                # HI :: a single random musical note character
+                                # will be added before and after each line.  TODO
+G_OPTION_TRN_WORD_TIME=250 ;    # We'll pick the shorter of the two times:
+                                # - the implied time, and
+                                # - the # of words spoken times this vaule.
+                                # TODO add command line option for this value
+                                # TODO default the GENRE to 'Transcript' if it's
+                                #      not provided on the command line.
 G_OPTION_TITLE='' ;
 G_OPTION_ARTIST='' ;
 G_OPTION_GENRE='' ;
@@ -442,7 +454,7 @@ my_usage() {
 
   tput sgr0 ;
   echo "USAGE ::" ; # TODO :: add some help text
-  echo -n ' ls *.flv *.avi *.mkv *.mp4 *.webm *.ts *.mpg *.vob *.VOB 2>/dev/null '
+  echo -n ' ls *.flv *.avi *.mkv *.mp4 *.MP4 *.webm *.ts *.mpg *.vob *.VOB 2>/dev/null '
   echo    '| while read yy ; do '$0' "${yy}" ; done' ;
 
   exit $L_RC ;
@@ -1195,10 +1207,10 @@ apply_script_to_srt_subtitles() {
   ) ;
 
   # https://unix.stackexchange.com/questions/181937/how-create-a-temporary-file-in-shell-script
-  G_TMP_FILE="$(mktemp "/tmp/${C_SCRIPT_NAME}-sed.XXXXXX")" ;
-# exec 3>"${G_TMP_FILE}" ;
-# exec 4<"${G_TMP_FILE}" ;
-# /bin/rm -f "${G_TMP_FILE}" ;
+  G_SED_FILE="$(mktemp "/tmp/${C_SCRIPT_NAME}-sed.XXXXXX")" ;
+# exec 3>"${G_SED_FILE}" ;
+# exec 4<"${G_SED_FILE}" ;
+# /bin/rm -f "${G_SED_FILE}" ;
 
   { # (I'm not going to bother adjusting the indent for this block ...)
   local ido=0 ;
@@ -1228,7 +1240,7 @@ apply_script_to_srt_subtitles() {
       echo -n '! ' ;
 
       echo "s#${SED_SCRIPT_ARRAY[$idx]}#${REPLACEMENT_STR}#" \
-        >> "${G_TMP_FILE}" ;
+        >> "${G_SED_FILE}" ;
 
     else  # }{  Yeah, I know I made this way too fancy ...
       echo -n "${ATTR_YELLOW_BOLD}.. " ;
@@ -1249,7 +1261,7 @@ apply_script_to_srt_subtitles() {
   echo -n 'DOS..'
   cat "${ASS_SRC}"  \
       | ${DOS2UNIX} \
-      | ${SED} "--file=${G_TMP_FILE}" \
+      | ${SED} "--file=${G_SED_FILE}" \
     > "${ASS_DST}" ;
   echo ".${ATTR_OFF}" ;
 
@@ -1377,10 +1389,10 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
   ) ;
 
   # https://unix.stackexchange.com/questions/181937/how-create-a-temporary-file-in-shell-script
-  G_TMP_FILE="$(mktemp "/tmp/${C_SCRIPT_NAME}-sed.XXXXXX")" ;
-# exec 3>"${G_TMP_FILE}" ;
-# exec 4<"${G_TMP_FILE}" ;
-# /bin/rm -f "${G_TMP_FILE}" ;
+  G_SED_FILE="$(mktemp "/tmp/${C_SCRIPT_NAME}-sed.XXXXXX")" ;
+# exec 3>"${G_SED_FILE}" ;
+# exec 4<"${G_SED_FILE}" ;
+# /bin/rm -f "${G_SED_FILE}" ;
 
   { # (I'm not going to bother adjusting the indent for this block ...)
   local ido=0 ;
@@ -1410,7 +1422,7 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
       echo -n '! ' ;
 
       echo "s#${SED_SCRIPT_ARRAY[$idx]}#${REPLACEMENT_STR}#" \
-        >> "${G_TMP_FILE}" ;
+        >> "${G_SED_FILE}" ;
 
     else  # }{  Yeah, I know I made this way too fancy ...
       echo -n "${ATTR_YELLOW_BOLD}.. " ;
@@ -1431,7 +1443,7 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
   echo -n 'DOS..'
   cat "${ASS_SRC}"  \
       | ${DOS2UNIX} \
-      | ${SED} "--file=${G_TMP_FILE}" \
+      | ${SED} "--file=${G_SED_FILE}" \
     > "${ASS_DST}" ;
   echo ".${ATTR_OFF}" ;
 
@@ -1450,7 +1462,7 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
 
 ###############################################################################
 ###############################################################################
-# line_to_seconds="$(my_strptime ${my_state} "${current_text}")" ; RC=$? ;
+# current_start_time="$(my_strptime ${my_state} "${current_line}")" ; RC=$? ;
 #
 # Working with time in shell script is a B***h at best.
 # I think this solution is okay.
@@ -1468,7 +1480,7 @@ my_strptime() {
 
     ###########################################################################
     # We'll use grep to match the timestamp pattern, then 'date -d' with the
-    # adjusted pattern to actually validate the timestamp itself.  Duuno if
+    # adjusted pattern to actually validate the timestamp itself.  Dunno if
     # there's a less round-about way to do this, but the 'net didn't seem to
     # have a matching solution.
     #
@@ -1477,19 +1489,52 @@ my_strptime() {
     #
     # First, we'll try the '00:00' pattern to see if there's a hit.
     #
-  echo "${in_line}" | ${GREP} -q '^[0-9]\{1,2\}:[0-9][0-9]$' ; RC=$? ;
+  echo "${in_line}" | ${GREP} -q '^[0-9]\{1,2\}:[0-5][0-9]$' ; RC=$? ;
   if [ ${RC} -eq 0 ] ; then  # {
     ts_pad='00:' ; # It's the '00:00' pattern, so add the hours padding ...
   fi  # }
 
-  ts_seconds="$(date -d "${ts_pad}${in_line}" '+%s' 2>/dev/null)" ; RC=$? ;
-  if [ ${RC} -eq 0 ] ; then  # {
-    echo "${ts_seconds}" ;
-  else  # }{
-    :
-  fi  # }
+  ts_seconds="$(${DATE} -d "${ts_pad}${in_line}" '+%s' 2>/dev/null)" ; RC=$? ;
 
+  echo "${ts_seconds}" ;
   return $RC;
+}
+
+
+###############################################################################
+# write_a_subtitle_line "${previous_line}"       \
+#                       "${subtitle_file_out}"   \
+#                       "${transcript_style}"    \
+#                       "${previous_start_time}" \
+#                       "${previous_end_time}" ;
+# TODO --
+#  46:48 -- implied duration is 7 seconds, but he speaks line in under 2000ms
+#  i'll give you a second             5 words @250ms (default value) = 1250ms
+#  46:55
+#  there it is
+#
+write_a_subtitle_line() {
+  transcript_line="$1" ; shift ;
+
+    [ "${previous_line}" = '' ] && return 0 ; # should __only__ see this once!
+                                              # before the first __real__ line
+                                              # is written to subtitle file.
+  subtitle_file_out="$1" ; shift ;
+  transcript_style="$1" ; shift ;
+  transcript_start_time="$1" ; shift ;
+  transcript_end_time="$1" ; shift ;
+
+  # Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+  # Dialogue: 0,0:00:36.54,0:00:40.92,Default,,0,0,0,,♪ Sleep alone tonight ♪
+
+  printf "Dialogue: 0,%s.00,%s.00,%s,,0,0,0,,%s\n"   \
+         "$(${DATE} -d "@${transcript_start_time}" +%T)" \
+         "$(${DATE} -d "@${transcript_end_time}" +%T)"   \
+         "${transcript_style}"                       \
+         "${transcript_line}" >> "${subtitle_file_out}" ;
+
+  { RC=$? ; set +x ; } >/dev/null 2>&1
+  return ${RC} ;
 }
 
 
@@ -1509,7 +1554,7 @@ my_strptime() {
 # TO:
 #
 # Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-# Dialogue: 0,0:00:36.54,0:00:40.92,Default1,,0,0,0,,♪ Sleep alone tonight ♪
+# Dialogue: 0,0:00:36.54,0:00:40.92,Default,,0,0,0,,♪ Sleep alone tonight ♪
 #
 add_transcript_text_to_subtitle() {
 
@@ -1517,9 +1562,14 @@ add_transcript_text_to_subtitle() {
   local transcript_file_in="$1" ; shift ;
   local transcript_style="$1" ; shift ;
 
-  local lines_processed=0 ; # TODO :: keep track of lines ...
-  local current_text='' ;
-  local previous_text='' ;
+  local transcript_errors=0 ; # After X number of errors, we'll quit
+  local transcript_lineno=0 ; # ...so the user can identify glitches
+
+  local current_line='' ;
+
+  local previous_line='' ;
+  local previous_start_time='' ;
+  local previous_end_time='' ;
 
   echo >&2 "  IN ${FUNCNAME[0]} ..." ;
   echo >&2 "  TR '${transcript_file_in}' ..." ;
@@ -1529,38 +1579,60 @@ add_transcript_text_to_subtitle() {
 
     ###########################################################################
     # Walk through the transcript file:
+    # - keep track of the line number in case there's an error with the line;
     # - grep to remove any "magic" lines (#S, #H, etc.); and
     # - sed to trim the line of leading / trailing SPACEs.
+    # - skip any EMPTY lines
     #
-  cat "${transcript_file_in}"       \
-    | egrep -v '^#|^exit 0'         \
-    | ${SED} -e 's/^[[:space:]]*//' \
-             -e 's/[[:space:]]*$//' \
-    | while read current_text ; do  # {
+  cat "${transcript_file_in}"              \
+    | sed -e 's/^#.*//'                    \
+          -e 's/^exit[[:space:]]*[0]*.*//' \
+          -e 's/^[[:space:]]*//'           \
+          -e 's/[[:space:]]*$//'           \
+    | while read current_line ; do  # {
 
-       echo >&2 "  >> CURR = '${current_text}'" ;
+      (( transcript_lineno++ )) ;
 
        if [ ${my_state} -eq 0 ] ; then  # {
-          if [ "${current_text}" = '' ] ; then  # {
-            echo 'OKAY SKIPPING BLANK LINE' >&2 ;
+          if [ "${current_line}" = '' ] ; then  # {
+            echo -n "  SKIPPING EMPTY OR OTHER '#' LINE "
+            echo    "WHILE LOOKING FOR TIMESTAMP ${ATTR_GREEN}(THIS IS OKAY)${ATTR_OFF}" ;
             continue ;
           fi  # }
        else  # }{
-         echo
-       fi  # }
-
-       if [ "${previous_text}" != '' ] ; then  # {
-          # FIXME -- this is in wrong place
-          echo 'OKAY, if this is a TIMESTAMP, now dump out the previous line as a formatted Dialogue:' ;
-       fi  # }
-
-       line_to_seconds="$(my_strptime ${my_state} "${current_text}")" ; RC=$? ;
-       if [ ${RC} -eq 0 ] ; then  # {
-         echo >&2 "FOUND A TIMESTAME = '${line_to_seconds}'" ;
-       else  # }{
          :
        fi  # }
+
+       current_start_time="$(my_strptime ${my_state} "${current_line}")" ; RC=$? ;
+
+       if [ ${RC} -eq 0 ] ; then  # {
+         if [ ${my_state} -ne 0 ] ; then  # { DEBUG: s/b '-ne 0'
+           (( transcript_errors++ )) ;
+           echo >&2 -n "  ${ATTR_NOTE} Found a timestamp where text was expected, " ;
+           echo >&2 -n "${transcript_lineno}, " ;
+           echo >&2    "'${ATTR_YELLOW}${current_line}$(tput sgr0)'" ;
+           # FIXME :: what to do?
+         fi  # }
+         local previous_end_time="${current_start_time}" ; # added for CLARITY
+         write_a_subtitle_line "${previous_line}"       \
+                               "${subtitle_file_out}"   \
+                               "${transcript_style}"    \
+                               "${previous_start_time}" \
+                               "${previous_end_time}" ;
+         previous_start_time="${current_start_time}" ;
+         my_state=1 ;
+       else  # }{
+         previous_line="${current_line}" ;
+         my_state=0 ;
+       fi  # }
+
+       # TODO :: bail after so many 'transcript_errors' errors
     done  # }
+
+    # FIXME :: do the last line outside of the loop
+
+    echo "transcript_lines  = '${transcript_lineno}'" ;
+    echo "transcript_errors = '${transcript_errors}'" ;
 }
 
 
@@ -1670,7 +1742,7 @@ convert_transcripts_to_ass() {
   #
   cat << HERE_DOC > "${subtitle_file_out}" ;
 [Script Info]
-; Script generated by ${MY_SCRIPT} on `date`
+; Script generated by ${MY_SCRIPT} on `${DATE}`
 ScriptType: v4.00+
 PlayResX: 1280
 PlayResY: 720
@@ -1830,7 +1902,8 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
     convert_transcripts_to_ass "${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" \
                                "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}"*.txt ;
 
-##-dbg  G_SUBTITLE_PATHNAME="${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass"
+    G_SUBTITLE_PATHNAME="${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass"
+
   elif [ -s "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" ] ; then  # }{
 
     ###########################################################################
