@@ -169,6 +169,7 @@ export ATTR_CLOSE_TIC="${ATTR_CLR_BOLD}${CLOSE_TIC}${ATTR_OFF}" ;
 
 export ATTR_ERROR="${ATTR_RED_BOLD}ERROR -${ATTR_OFF}" ;
 export ATTR_NOTE="${ATTR_OFF}`tput setaf 11`NOTE -${ATTR_OFF}";
+export ATTR_TODO="${ATTR_OFF}`tput setaf 11; tput blink`TODO -${ATTR_OFF}";
 export ATTR_TOOL="${ATTR_GREEN_BOLD}" ;
 
 export G_SED_FILE='' ;
@@ -235,9 +236,12 @@ trap 'exit_handler' EXIT ;
 #  - dos2unix   - ffmpeg builds a DOS file when converting SRT to ASS subtitles
 #  - bash shell - unless you're going with a really old distro, the version of
 #                 bash installed is probably modern enough for this script.
-#                 No special advanced bash features are intentionally used in
-#                 this script (except for array append, but that 1st appeared
-#                 in 3.1x or thereabouts).
+#
+#                 The script does use the [[ ]] construct, so this script is
+#                 not portable to systems that only have '/bin/sh'.  However,
+#                 this should __not__ be a problem on modern architectures,
+#                 and bash exists for even legacy Solaris 8 systems (I used to
+#                 run bash on my SunOS 4.1.3_u1 SPARC system back in the day).
 #                 This script used bash-5.1.0 in its development.
 #  - exiftool   - used in this script to get/copy metadata from the source
 #                 video to the re-encoded video.
@@ -347,12 +351,13 @@ G_OPTION_TRN_MUSIC_CHARS='♩♪♫'; # https://www.alt-codes.net/music_note_alt
                                 # they may get mapped to their legacy character.
 G_OPTION_TRN_WC_THRESHOLD=10 ;  # If the line is less than 10 words, we'll re-time
                                 # the 'End' for the line.  TODO
-G_OPTION_TRN_WORD_TIME=277 ;    # We'll pick the shorter of the two times:
+G_OPTION_TRN_WORD_TIME=375 ;    # We'll pick the shorter of the two times:
                                 # - the implied time, and
                                 # - the # of words spoken times this vaule.
                                 # TODO add command line option for this value
                                 # TODO default the GENRE to 'Transcript' if it's
                                 #      not provided on the command line.
+G_TRN_WORD_TIME_MIN=200 ;       # The minimum value allowed for 'G_OPTION_TRN_WORD_TIME'
 G_OPTION_TITLE='' ;
 G_OPTION_ARTIST='' ;
 G_OPTION_GENRE='' ;
@@ -655,24 +660,24 @@ check_font_name() {
 # below the original value w/o having to worry about negative numbers.
 #
 apply_percentage() {
-  local in_number="$1" ; shift ;
   local my_option="$1" ; shift ;
   local in_percentage="$1" ; shift ;
+  local in_number="$1" ; shift ;
   local my_scale="$1" ; shift ; # number of digits right of the decimal point
 
-  ${DBG} echo "OPTION = '${my_option}', PERCENTAGE = '${my_percentage}'" >&2 ;
+  ${DBG} echo >&2 "OPTION = '${my_option}', PERCENTAGE = '${my_percentage}'" ;
 
   while : ; do  # {
     if [ "${in_percentage}" = '' ] ; then  # Pedantic, I know ...
-      echo "${ATTR_ERROR} '${my_option}' requires a percentage value." >&2 ;
+      echo >&2 "${ATTR_ERROR} '${my_option}' requires a percentage value." ;
       break ;
     fi
 
     local my_percentage="$(echo "${in_percentage}" | ${SED} -e 's/%$//')" ;
 
     local my_regex='^[0-9]+([.][0-9]+)?$' ;
-    if ! [[ "${my_percentage}" =~ ${my_regex} ]] ; then
-      echo "${ATTR_ERROR} '${my_option}=${in_percentage}' is not a number" ;
+    if ! [[ "${my_percentage}" =~ $my_regex ]] ; then
+      echo >&2 "${ATTR_ERROR} '${my_option}=${in_percentage}' is not a number" ;
       break ;
     fi
 
@@ -688,7 +693,53 @@ apply_percentage() {
 }
 
 
-# XXXX
+###############################################################################
+# validate_integer  option  value  minimum  [maximum]
+#
+validate_integer() {
+  local my_option="$1" ; shift ;
+  local in_value="$1" ; shift ;
+  local in_minimum_value="$1" ; shift ;
+  local in_maximum_value=100000 ;
+  if [ $# -eq 1 ] ; then
+    in_maximum_value="$1" ; shift ;
+  fi
+
+  while : ; do  # {
+    if [ "${in_value}" = '' ] ; then  #  { Pedantic, I know ...
+      echo >&2 "${ATTR_ERROR} '${my_option}' requires an integer." ;
+      break ;
+    fi  # }
+
+    local re='^[0-9]+$' ; # Simple way to check if string is an integer
+    if ! [[ $in_value =~ $re ]] ; then  # {
+      echo >&2 "${ATTR_ERROR} '${my_option}=${in_value}' is not an integer." ;
+      break ;
+    fi  # }
+
+    if [[ $in_value -lt $in_minimum_value ]] ; then  # {
+      echo >&2 -n "${ATTR_ERROR} '${my_option}=${in_value}', value is too " ;
+      echo >&2    "small (${ATTR_BLUE_BOLD}${in_minimum_value}${ATTR_OFF})." ;
+      break ;
+    fi  # }
+
+    if [[ $in_value -gt $in_maximum_value ]] ; then  # {
+      echo >&2 -n "${ATTR_ERROR} '${my_option}=${in_value}', value is too " ;
+      echo >&2    "great (${ATTR_BLUE_BOLD}${in_maximum_value}${ATTR_OFF})." ;
+      break ;
+    fi  # }
+
+    printf "%s" "${in_value}" ;
+    return 0;
+  done  # }
+
+    ###########################################################################
+    # FAILURE :: exit; we've already printed an appropriate error message above
+    #
+  abort ${FUNCNAME[0]} ;
+}
+
+
 ###############################################################################
 # If not disabled, then echo out any other command line options which affect
 # the video's encoding (e.g., changing the font face and/or size).
@@ -719,7 +770,7 @@ fi
 ###############################################################################
 ###############################################################################
 ###############################################################################
-# Setup and use getopt for the command line arguments.
+# Setup and use getopt() for the command line arguments.
 # Stuff the parsed options back into the arg[] list (quotes are essential)...
 # (You know, I don't remember why I originally chose this particular method.)
 #
@@ -742,6 +793,7 @@ no-modify-srt,\
 no-fuzzy,\
 preset::,\
 out-dir::,\
+trn-word-time-ms::,\
 trn-is-music,\
 srt-default-font::,\
 srt-italics-font::,\
@@ -797,12 +849,29 @@ while true ; do  # {
     shift 2;
     ;;
   --srt-font-size-percent)
-    IN_SIZE="${G_OPTION_SRT_FONT_SIZE}" ;
-    G_OPTION_SRT_FONT_SIZE="$(apply_percentage "${G_OPTION_SRT_FONT_SIZE}" "$1" "$2" 1)" ;
+    olde_value="${G_OPTION_SRT_FONT_SIZE}" ;
+    G_OPTION_SRT_FONT_SIZE="$(apply_percentage "$1" "$2" "${G_OPTION_SRT_FONT_SIZE}" 1)" ;
     echo -n "${ATTR_YELLOW_BOLD}  SETTING SubRip font size ${ATTR_CLR_BOLD}" ;
-    echo -n "(${IN_SIZE})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_SRT_FONT_SIZE}" ;
+    echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_SRT_FONT_SIZE}" ;
     echo    "${ATTR_CLR_BOLD}.${ATTR_OFF}" ;
       # TODO :: add a note about this to the comments IF the video really had SubRip subtitles
+    shift 2;
+    ;;
+  --trn-font-size-percent)
+    olde_value="${G_OPTION_TRN_FONT_SIZE}" ;
+    G_OPTION_TRN_FONT_SIZE="$(apply_percentage "$1" "$2" "${G_OPTION_TRN_FONT_SIZE}" 1)" ;
+    echo -n "${ATTR_YELLOW_BOLD}  SETTING SubRip font size ${ATTR_CLR_BOLD}" ;
+    echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_FONT_SIZE}" ;
+    echo    "${ATTR_CLR_BOLD}.${ATTR_OFF}" ;
+      # TODO :: add a note about this to the comments IF the video really a transcript
+    shift 2;
+    ;;
+  --trn-word-time-ms)
+    olde_value="${G_OPTION_TRN_WORD_TIME}" ;
+    G_OPTION_TRN_WORD_TIME="$(validate_integer "$1" "$2" ${G_TRN_WORD_TIME_MIN})" ;
+    echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's word time ${ATTR_CLR_BOLD}" ;
+    echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_WORD_TIME}" ;
+    echo    "${ATTR_CLR_BOLD}.${ATTR_OFF}" ;
     shift 2;
     ;;
   --preset)
@@ -1517,7 +1586,10 @@ my_strptime() {
 #                       "${previous_end_time}"   \
 #                       "${G_OPTION_TRN_WORD_TIME}" \
 #                       "${G_OPTION_TRN_WC_THRESHOLD}" ;
-# TODO --
+# RETURNS:
+#   0 - no timing adjustments were made;
+#   1 - a timing adjustment was performed.
+#
 #  0:05                                    -- 8 words, IMPLIED is 8 seconds
 #  hi everybody good morning how's it going today   -- just under 4 seconds
 #  0:13
@@ -1539,6 +1611,8 @@ write_a_subtitle_line() {
   transcript_end_time="$1" ; shift ;
   transcript_word_time="$1" ; shift ;     # Not perfect, but s/b okay ...
   transcript_wc_threshold="$1" ; shift ;
+
+  local adjustment_made=0 ;
 
   num_words="$(printf '%s' "${transcript_line}" | ${WC} -w)" ;
 
@@ -1570,6 +1644,7 @@ write_a_subtitle_line() {
         # math calculations in milliseconds from the start...
         #
       end_time_decimal="$( ((uu = (line_estimated_ms % 1000) / 10 )) ; printf "%.2d" $uu)" ;
+      adjustment_made=1 ;
     else  # }{
       end_time="${transcript_end_time}" ;
       end_time_decimal='00' ;
@@ -1589,8 +1664,7 @@ write_a_subtitle_line() {
          "${transcript_style}"                           \
          "${transcript_line}" >> "${subtitle_file_out}" ;
 
-  { RC=$? ; set +x ; } >/dev/null 2>&1
-  return ${RC} ;
+  return ${adjustment_made} ;
 }
 
 
@@ -1598,7 +1672,7 @@ write_a_subtitle_line() {
 # add_transcript_text_to_subtitle  subtitle_file_out  transcript_file_in  style
 #
 # We'll use a *very* simple state machine to roll up the transcript into
-# the subtitle file.
+# the subtitle file.  Because it's 99% script, this part is pretty expensive.
 #
 # 0:05
 # hi everybody good morning how's it going today
@@ -1620,6 +1694,7 @@ add_transcript_text_to_subtitle() {
 
   local transcript_errors=0 ; # After X number of errors, we'll quit
   local transcript_lineno=0 ; # ...so the user can identify glitches
+  local transcript_adjustments=0 ; # ..statistics
 
   local current_line='' ;
 
@@ -1686,6 +1761,7 @@ add_transcript_text_to_subtitle() {
                                  "${previous_end_time}"   \
                                  "${G_OPTION_TRN_WORD_TIME}" \
                                  "${G_OPTION_TRN_WC_THRESHOLD}" ;
+           (( transcript_adjustments += $? )) ;
          fi  # }
          previous_start_time="${current_start_time}" ;
          my_state=1 ;
@@ -1705,14 +1781,16 @@ add_transcript_text_to_subtitle() {
                           "${previous_end_time}"   \
                           "${G_OPTION_TRN_WORD_TIME}" \
                           "${G_OPTION_TRN_WC_THRESHOLD}" ;
+    (( transcript_adjustments += $? )) ;
 
     if [ ${skipped_lines} -ne 0 ] ; then
       echo -n "  SKIPPED ${skipped_lines} EMPTY OR OTHER '#' LINE(s) "
       echo    "AT THE END OF THE TRANSCRIPT ${ATTR_GREEN}(THIS IS OKAY)${ATTR_OFF}" ;
     fi
 
-    echo "transcript_lines  = '${transcript_lineno}'" ;
-    echo "transcript_errors = '${transcript_errors}'" ;
+    echo "transcript: lines = ${transcript_lineno}," ;
+    echo "      adjustments = ${transcript_adjustments}," ;
+    echo "           errors = ${transcript_errors}." ;
 }
 
 
@@ -1730,6 +1808,9 @@ add_transcript_style_to_subtitle() {
 
     ###########################################################################
     # Copy through the embedded style and perform some basic validity checking.
+    #
+    # TODO :: if we successfully extract an embedded style from the transcript,
+    #         we should ensure that the font named in the 'Style:' is valid.
     #
   ${GREP} '^#S' "${transcript_file_in}" \
     | ${SED} -e 's/^#S[ ]*//'              \
@@ -1878,7 +1959,7 @@ HERE_DOC
       elif [ ${RC} -eq 1 ] ; then  # }{
         # TODO :: should we allow multiple transcripts w/o any embedded styles?
         #       i.e., just assign a default "new" style to each transcript file?
-        echo 'TODO, no Style:, just add a message about using the default style' ;
+        echo "  ${ATTR_TODO} no Style:, just add a message about using the default style" ;
       else  # }{
         echo "${ATTR_ERROR} TODO" ;
         abort ${FUNCNAME[0]} ;
