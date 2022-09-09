@@ -334,14 +334,14 @@ G_OPTION_SRT_DEFAULT_FONT_NAME='Open Sans'           ; # ANOTHER TEST
 G_OPTION_SRT_DEFAULT_FONT_NAME='Open Sans Semibold'  ; # The font for SubRip subtitles
 G_OPTION_SRT_ITALICS_FONT_NAME="${G_OPTION_SRT_DEFAULT_FONT_NAME}" ;
 
-G_OPTION_TRN_FONT_SIZE=38 ;     # The font size for Transcript subtitles
+G_OPTION_TRN_FONT_SIZE=44 ;     # The font size for Transcript subtitles
 G_OPTION_TRN_ENGLISH_FONT_NAME='NimbusRoman-Regular' ; # Font for Transcript subtitles
 G_OPTION_TRN_IS_MUSIC='' ;      # The transcript is NOT music lyrics
 G_OPTION_TRN_MUSIC_CHARS='♩♪♫'; # https://www.alt-codes.net/music_note_alt_codes.php
                                 # If the user specifies '--trn-is-music', then
                                 # HI :: a single random musical note character
                                 # will be added before and after each line.  TODO
-G_OPTION_TRN_WORD_TIME=250 ;    # We'll pick the shorter of the two times:
+G_OPTION_TRN_WORD_TIME=277 ;    # We'll pick the shorter of the two times:
                                 # - the implied time, and
                                 # - the # of words spoken times this vaule.
                                 # TODO add command line option for this value
@@ -1502,35 +1502,57 @@ my_strptime() {
 
 
 ###############################################################################
-# write_a_subtitle_line "${previous_line}"       \
-#                       "${subtitle_file_out}"   \
+# write_a_subtitle_line "${subtitle_file_out}"   \
+#                       "${previous_line}"       \
 #                       "${transcript_style}"    \
 #                       "${previous_start_time}" \
 #                       "${previous_end_time}" ;
 # TODO --
-#  46:48 -- implied duration is 7 seconds, but he speaks line in under 2000ms
-#  i'll give you a second             5 words @250ms (default value) = 1250ms
+#  0:05                                    -- 8 words, IMPLIED is 8 seconds
+#  hi everybody good morning how's it going today   -- just under 4 seconds
+#  0:13
+#  the local time is 8 48 and we will begin
+#
+#  46:48 -- IMPLIED duration is 7 seconds, but he speaks line in under 1500ms
+#  i'll give you a second          -- 5 words @250ms (default value) = 1250ms
 #  46:55
 #  there it is
 #
+# Maybe if there's less than, say, 6-8 words, do the extra work,
+# otherwise keep the existing line's duration ...?
+#
 write_a_subtitle_line() {
-  transcript_line="$1" ; shift ;
-
-    [ "${previous_line}" = '' ] && return 0 ; # should __only__ see this once!
-                                              # before the first __real__ line
-                                              # is written to subtitle file.
   subtitle_file_out="$1" ; shift ;
+  transcript_line="$1" ; shift ;
   transcript_style="$1" ; shift ;
   transcript_start_time="$1" ; shift ;
   transcript_end_time="$1" ; shift ;
+  transcript_word_time="$1" ; shift ;     # Not perfect, but s/b okay ...
+
+  if false ; then  # {  # Tuning this is a bit tricky - is it worth it?
+    set -x
+    (( line_time_seconds = transcript_end_time - transcript_start_time )) ;
+    num_words="$(echo "${transcript_line}" | ${WC} -w)" ;
+    (( est_time_ms = ((num_words + 1) * transcript_word_time) )) ;
+    : "${transcript_line}"
+    : "${line_time_seconds}" "${est_time_ms}"
+
+    end_time="${transcript_end_time}" ;
+    end_time_decimal='00' ;
+    { set +x ; } >/dev/null 2>&1
+  else  # }{
+    end_time="${transcript_end_time}" ;
+    end_time_decimal='00' ;
+  fi  # }
 
   # Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   # Dialogue: 0,0:00:36.54,0:00:40.92,Default,,0,0,0,,♪ Sleep alone tonight ♪
 
-  printf "Dialogue: 0,%s.00,%s.00,%s,,0,0,0,,%s\n"   \
+  printf "Dialogue: 0,%s.00,%s.%s,%s,,0,0,0,,%s\n"       \
          "$(${DATE} -d "@${transcript_start_time}" +%T)" \
-         "$(${DATE} -d "@${transcript_end_time}" +%T)"   \
-         "${transcript_style}"                       \
+         "$(${DATE} -d "@${end_time}" +%T)"              \
+         "${end_time_decimal}"                           \
+         "${transcript_style}"                           \
          "${transcript_line}" >> "${subtitle_file_out}" ;
 
   { RC=$? ; set +x ; } >/dev/null 2>&1
@@ -1614,11 +1636,14 @@ add_transcript_text_to_subtitle() {
            # FIXME :: what to do?
          fi  # }
          local previous_end_time="${current_start_time}" ; # added for CLARITY
-         write_a_subtitle_line "${previous_line}"       \
-                               "${subtitle_file_out}"   \
-                               "${transcript_style}"    \
-                               "${previous_start_time}" \
-                               "${previous_end_time}" ;
+         if [ "${previous_line}" != '' ] ; then  # { should __only__ see this once!
+           write_a_subtitle_line "${subtitle_file_out}"   \
+                                 "${previous_line}"       \
+                                 "${transcript_style}"    \
+                                 "${previous_start_time}" \
+                                 "${previous_end_time}"   \
+                                 "${G_OPTION_TRN_WORD_TIME}" ;
+         fi  # }
          previous_start_time="${current_start_time}" ;
          my_state=1 ;
        else  # }{
@@ -1629,7 +1654,13 @@ add_transcript_text_to_subtitle() {
        # TODO :: bail after so many 'transcript_errors' errors
     done  # }
 
-    # FIXME :: do the last line outside of the loop
+    (( previous_end_time += 7 )) ; # Yup, it's a hack — but a reasonalbe hack!
+    write_a_subtitle_line "${subtitle_file_out}"   \
+                          "${previous_line}"       \
+                          "${transcript_style}"    \
+                          "${previous_start_time}" \
+                          "${previous_end_time}"   \
+                          "${G_OPTION_TRN_WORD_TIME}" ;
 
     echo "transcript_lines  = '${transcript_lineno}'" ;
     echo "transcript_errors = '${transcript_errors}'" ;

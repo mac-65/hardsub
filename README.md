@@ -11,8 +11,8 @@ use at your own risk.
 
 #### Rational
 I want to watch some media on my olde Samsung TV.
-It can barely handle SRT subtitles and has no knowlegde of Substation *anything*!
-Also, it (as far as I know) can't play flac or anything above yuv420p for x264.
+It can barely handle SubRip subtitles and has no knowledge of Substation *anything*!
+Also, it (as far as I know) can't play FLAC or anything above yuv420p for x264.
 
 #### Design Philosophy
 The script is meant to run as simply as possible without setting a lot of
@@ -27,7 +27,7 @@ to get a simple command line snippet to run --<br>
 ```
 ./hardsub.sh
 USAGE ::
- ls *.flv *.avi *.mkv *.mp4 *.webm *.ts *.mpg *.vob 2>/dev/null | while read yy ; do ./hardsub.sh "${yy}" ; done
+ ls *.flv *.avi *.mkv *.mp4 *.MP4 *.webm *.ts *.mpg *.vob *.VOB 2>/dev/null | while read yy ; do ./hardsub.sh "${yy}" ; done
 ```
 
 It uses the <strong>MP4</strong> video container for the re-encoded video and
@@ -43,17 +43,39 @@ C_SUBTITLE_IN_DIR='IN SUBs' ;
 ```
 
 ## Subtitles
-Two types of subtitles are supported:
+Two types of *standard* subtitles are supported:
 SubRip (SRT) and Advanced Substation Alpha (ASS).<br>
 
-If a video contains a subtitle *track*, the script can perform edits on the
-script before passing it along to <code>ffmpeg</code>.
-Generally, for a *lyrical* subtitle, you probably would NOT make any changes
-(and it doesn't), but for other types of subtitles, changing the font,
-its size, and/or it colour can really improve the readability of the text.<br>
+If a video contains an embedded subtitle *track*, the script can perform
+edits on the script before passing it along to <code>ffmpeg</code>.
+
+Generally, for a *lyrical* subtitle, you probably would NOT want to
+make any changes (and it doesn't), but for other types of subtitles,
+changing the font, its size, and/or it colour can really improve
+the readability of the text.<br>
 Some of these text attributes are configurable on the command line
 (e.g. <code>--font-size=</code>), and
 more complex changes will have to be made in the script (for now).
+
+### Alpha Subtitle Feature
+The script has basic support for burning a transcript file as a subtitle.
+This follows the same convention for external subtitle files by putting the
+transcript file (except using a <code>.txt</code> filename extension) in
+the <code>C_SUBTITLE_IN_DIR</code> which defaults to <code>'./IN SUBs'</code>.
+
+It's a little klunky and not super-robust, but there's a real use for this
+feature.  What I've found is that there are some neat videos in other languages
+that have a translation transcript.  This allows for offline viewing.
+
+The goal is to support (say) up to three transcripts for a video.
+This would be useful for Japanese music video where there are transcripts for:<br>
+- the English translation;
+- the rōmaji; and
+- the Japanese language itself.
+
+Of course, fancy lyrical text effects are way, way beyond the scope of this script
+(and my current skill set as well 🤩).<br>
+I'm not 100% certain, but Korean media may follow a similar 3-script path.
 
 ## Prerequisites and Required Tools
 
