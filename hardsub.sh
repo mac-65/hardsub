@@ -301,6 +301,7 @@ C_FFMPEG_MP3_BITS=320 ;         # We'll convert the audio track to MP3
 C_FFMPEG_PIXEL_FORMAT='yuvj420p'; # If it does NOT work, go back to 'yuv420p'.
                                 # https://news.ycombinator.com/item?id=20036710
 
+# TODO :: Only build the directories that are actually needed by the re-encode
 C_SUBTITLE_OUT_DIR='./SUBs' ;   # Where to save the extracted subtitle
 C_FONTS_DIR="${HOME}/.fonts" ;  # Where to save the font attachments
 
@@ -336,11 +337,16 @@ G_OPTION_SRT_ITALICS_FONT_NAME="${G_OPTION_SRT_DEFAULT_FONT_NAME}" ;
 
 G_OPTION_TRN_FONT_SIZE=44 ;     # The font size for Transcript subtitles
 G_OPTION_TRN_ENGLISH_FONT_NAME='NimbusRoman-Regular' ; # Font for Transcript subtitles
-G_OPTION_TRN_IS_MUSIC='' ;      # The transcript is NOT music lyrics
+G_OPTION_TRN_IS_MUSIC='' ;      # If 'y', then the transcript is music lyrics
 G_OPTION_TRN_MUSIC_CHARS='♩♪♫'; # https://www.alt-codes.net/music_note_alt_codes.php
-                                # If the user specifies '--trn-is-music', then
-                                # HI :: a single random musical note character
+                                # HI :: If the user specifies '--trn-is-music',
+                                # then a single random musical note character
                                 # will be added before and after each line.  TODO
+                                # SPECIAL NOTE :: libass does not support emoji,
+                                # so using emoji characters may not always work,
+                                # they may get mapped to their legacy character.
+G_OPTION_TRN_WC_THRESHOLD=10 ;  # If the line is less than 10 words, we'll re-time
+                                # the 'End' for the line.  TODO
 G_OPTION_TRN_WORD_TIME=277 ;    # We'll pick the shorter of the two times:
                                 # - the implied time, and
                                 # - the # of words spoken times this vaule.
@@ -356,15 +362,16 @@ C_SUBTITLE_IN_DIR='IN SUBs' ;   # location for manually added subtitles
 
   #############################################################################
   # Video filter setup area ...  Still rough around the edges.
-  # TODO :: Should I roll up the 'C_VIDEO_PAD_FILTER' filter here?
+  # TODO :: Should I roll up the 'C_VIDEO_PAD_FILTER_FIX' filter here?
   #
 G_PRE_VIDEO_FILTER='' ;
 G_POST_VIDEO_FILTER='' ;
 G_ZTE_FIX_FILENAMES=0 ; # Filter special character(s) from the filename (':').
-G_SMART_SCALING=0 ;     # TODO :: A marker for a future improvement.
+G_SMART_SCALING=0 ;     # A marker for a future improvement to scale a video
+                        # differently depending on the presence of subtitles.
 G_FLAC_PASSTHRU=0 ;     # Some devices support FLAC, so if the source is FLAC,
                         # tell ffmpeg to pass it through (using '-c:a copy').
-G_OPTION_MONO=0 ;       # down sample the audio to mono
+G_OPTION_MONO=0 ;       # Down sample the audio to mono.
 
   #############################################################################
   # We'll re-encode the video to h264.
@@ -374,9 +381,10 @@ G_OPTION_MONO=0 ;       # down sample the audio to mono
   # the exact error message).  The easiest fix is to always apply the “fix”
   # since on "correct" input videos, the fix will not have a negative effect.
   #
-  # This may also happen when re-sizing a video.
+  # This usually happens when re-sizing a video, but and original video may
+  # have a size not h264 compatible.
   #
-C_VIDEO_PAD_FILTER='pad=width=ceil(iw/2)*2:height=ceil(ih/2)*2' ; # The "fix"
+C_VIDEO_PAD_FILTER_FIX='pad=width=ceil(iw/2)*2:height=ceil(ih/2)*2' ;
 
 unset SED_SCRIPT_ARRAY ;
 declare -a SED_SCRIPT_ARRAY=(); # There's some question if this is global if
@@ -559,7 +567,7 @@ check_and_build_directory() {
   done ;  # }
 
     ###########################################################################
-    # FAILURE :: exit; we've alredy printed an appropriate error message above.
+    # FAILURE :: exit; we've already printed an appropriate error message above
     #
   abort ${FUNCNAME[0]} ;
 }
@@ -631,7 +639,7 @@ check_font_name() {
   done ;  # }
 
     ###########################################################################
-    # FAILURE :: exit; we've alredy printed an appropriate error message above.
+    # FAILURE :: exit; we've already printed an appropriate error message above
     #
   abort ${FUNCNAME[0]} ;
 }
@@ -674,7 +682,7 @@ apply_percentage() {
   done ;  # }
 
     ###########################################################################
-    # FAILURE :: exit; we've alredy printed an appropriate error message above.
+    # FAILURE :: exit; we've already printed an appropriate error message above
     #
   abort ${FUNCNAME[0]} ;
 }
@@ -1506,7 +1514,9 @@ my_strptime() {
 #                       "${previous_line}"       \
 #                       "${transcript_style}"    \
 #                       "${previous_start_time}" \
-#                       "${previous_end_time}" ;
+#                       "${previous_end_time}"   \
+#                       "${G_OPTION_TRN_WORD_TIME}" \
+#                       "${G_OPTION_TRN_WC_THRESHOLD}" ;
 # TODO --
 #  0:05                                    -- 8 words, IMPLIED is 8 seconds
 #  hi everybody good morning how's it going today   -- just under 4 seconds
@@ -1528,18 +1538,42 @@ write_a_subtitle_line() {
   transcript_start_time="$1" ; shift ;
   transcript_end_time="$1" ; shift ;
   transcript_word_time="$1" ; shift ;     # Not perfect, but s/b okay ...
+  transcript_wc_threshold="$1" ; shift ;
 
-  if false ; then  # {  # Tuning this is a bit tricky - is it worth it?
-    set -x
-    (( line_time_seconds = transcript_end_time - transcript_start_time )) ;
-    num_words="$(echo "${transcript_line}" | ${WC} -w)" ;
-    (( est_time_ms = ((num_words + 1) * transcript_word_time) )) ;
-    : "${transcript_line}"
-    : "${line_time_seconds}" "${est_time_ms}"
+  num_words="$(printf '%s' "${transcript_line}" | ${WC} -w)" ;
 
-    end_time="${transcript_end_time}" ;
-    end_time_decimal='00' ;
-    { set +x ; } >/dev/null 2>&1
+    ###########################################################################
+    # If the line has a __few__ number of words, then re-calculate the 'End'.
+    #
+    # Also, (for my "test" video), the transcript lines seem to lag the audio
+    # by a small amount.  My guess is that this is due to the 1 second
+    # resolution of the timestamp and the algorithm not wanting to be "early".
+    #
+  if [ ${num_words} -lt ${transcript_wc_threshold} ] ; then  # {
+
+    (( line_current_ms = (transcript_end_time - transcript_start_time) * 1000 )) ;
+    (( line_estimated_ms = (num_words + 1) * transcript_word_time )) ;
+
+    if [ ${line_estimated_ms} -lt ${line_current_ms} ] ; then  # {
+
+        #######################################################################
+        # Shell integer division always truncates and does not round up,
+        # so 1999 ms / 1000 = 1, not 2.
+        #
+      (( end_time = (line_estimated_ms / 1000) + transcript_start_time )) ;
+
+        #######################################################################
+        # We cheat a bit in that we *know* the start time is *always* an even
+        # number of seconds, so we save a little bit of math here (lazy) ...
+        #
+        # I'll probably do this *right* sometime and should do all of the
+        # math calculations in milliseconds from the start...
+        #
+      end_time_decimal="$( ((uu = (line_estimated_ms % 1000) / 10 )) ; printf "%.2d" $uu)" ;
+    else  # }{
+      end_time="${transcript_end_time}" ;
+      end_time_decimal='00' ;
+    fi  # }
   else  # }{
     end_time="${transcript_end_time}" ;
     end_time_decimal='00' ;
@@ -1593,6 +1627,8 @@ add_transcript_text_to_subtitle() {
   local previous_start_time='' ;
   local previous_end_time='' ;
 
+  local skipped_lines=0 ;
+
   echo >&2 "  IN ${FUNCNAME[0]} ..." ;
   echo >&2 "  TR '${transcript_file_in}' ..." ;
 
@@ -1615,10 +1651,9 @@ add_transcript_text_to_subtitle() {
 
       (( transcript_lineno++ )) ;
 
-       if [ ${my_state} -eq 0 ] ; then  # {
+       if [ ${my_state} -eq 0 ] ; then  # { FIXME - this logic is NOT quite right
           if [ "${current_line}" = '' ] ; then  # {
-            echo -n "  SKIPPING EMPTY OR OTHER '#' LINE "
-            echo    "WHILE LOOKING FOR TIMESTAMP ${ATTR_GREEN}(THIS IS OKAY)${ATTR_OFF}" ;
+            (( skipped_lines++ ))
             continue ;
           fi  # }
        else  # }{
@@ -1627,7 +1662,7 @@ add_transcript_text_to_subtitle() {
 
        current_start_time="$(my_strptime ${my_state} "${current_line}")" ; RC=$? ;
 
-       if [ ${RC} -eq 0 ] ; then  # {
+       if [ ${RC} -eq 0 ] ; then  # { FOUND A TIMESTAMP LINE!
          if [ ${my_state} -ne 0 ] ; then  # { DEBUG: s/b '-ne 0'
            (( transcript_errors++ )) ;
            echo >&2 -n "  ${ATTR_NOTE} Found a timestamp where text was expected, " ;
@@ -1635,6 +1670,13 @@ add_transcript_text_to_subtitle() {
            echo >&2    "'${ATTR_YELLOW}${current_line}$(tput sgr0)'" ;
            # FIXME :: what to do?
          fi  # }
+
+         if [ ${skipped_lines} -ne 0 ] ; then
+           echo -n "  SKIPPED ${skipped_lines} EMPTY OR OTHER '#' LINE(s) "
+           echo    "WHILE LOOKING FOR TIMESTAMP ${ATTR_GREEN}(THIS IS OKAY)${ATTR_OFF}" ;
+           skipped_lines=0 ;
+         fi
+
          local previous_end_time="${current_start_time}" ; # added for CLARITY
          if [ "${previous_line}" != '' ] ; then  # { should __only__ see this once!
            write_a_subtitle_line "${subtitle_file_out}"   \
@@ -1642,7 +1684,8 @@ add_transcript_text_to_subtitle() {
                                  "${transcript_style}"    \
                                  "${previous_start_time}" \
                                  "${previous_end_time}"   \
-                                 "${G_OPTION_TRN_WORD_TIME}" ;
+                                 "${G_OPTION_TRN_WORD_TIME}" \
+                                 "${G_OPTION_TRN_WC_THRESHOLD}" ;
          fi  # }
          previous_start_time="${current_start_time}" ;
          my_state=1 ;
@@ -1660,7 +1703,13 @@ add_transcript_text_to_subtitle() {
                           "${transcript_style}"    \
                           "${previous_start_time}" \
                           "${previous_end_time}"   \
-                          "${G_OPTION_TRN_WORD_TIME}" ;
+                          "${G_OPTION_TRN_WORD_TIME}" \
+                          "${G_OPTION_TRN_WC_THRESHOLD}" ;
+
+    if [ ${skipped_lines} -ne 0 ] ; then
+      echo -n "  SKIPPED ${skipped_lines} EMPTY OR OTHER '#' LINE(s) "
+      echo    "AT THE END OF THE TRANSCRIPT ${ATTR_GREEN}(THIS IS OKAY)${ATTR_OFF}" ;
+    fi
 
     echo "transcript_lines  = '${transcript_lineno}'" ;
     echo "transcript_errors = '${transcript_errors}'" ;
@@ -1926,10 +1975,9 @@ fi
 #
 if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
 
-  if [ "$( /bin/ls "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}"*.txt 2>/dev/null \
+  if [ "$(/bin/ls "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}"*.txt 2>/dev/null \
         | /bin/wc -l )" != '0' ] ; then
 
-    echo 'Handle transcripts here ...?' ;
     convert_transcripts_to_ass "${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" \
                                "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}"*.txt ;
 
@@ -2148,18 +2196,18 @@ fi  # }
 #         and NOT data that is easily viewable with other tools.
 #
 if [ "${G_PRE_VIDEO_FILTER}" != '' ] ; then
-  if [ "${C_VIDEO_PAD_FILTER}" = '' ] ; then
-     C_VIDEO_PAD_FILTER="${G_PRE_VIDEO_FILTER}" ;
+  if [ "${C_VIDEO_PAD_FILTER_FIX}" = '' ] ; then
+     C_VIDEO_PAD_FILTER_FIX="${G_PRE_VIDEO_FILTER}" ;
   else
-     C_VIDEO_PAD_FILTER="${G_PRE_VIDEO_FILTER},${C_VIDEO_PAD_FILTER}" ;
+     C_VIDEO_PAD_FILTER_FIX="${G_PRE_VIDEO_FILTER},${C_VIDEO_PAD_FILTER_FIX}" ;
   fi
 fi
 
 if [ "${G_SUBTITLE_PATHNAME}" = '' ] ; then  # {
-  if [ "${C_VIDEO_PAD_FILTER}" = '' ] ; then
+  if [ "${C_VIDEO_PAD_FILTER_FIX}" = '' ] ; then
     eval set -- ; # Build an EMPTY eval just to keep the code simple ...
   else
-    C_FFMPEG_VIDEO_FILTERS="`echo "${C_VIDEO_PAD_FILTER}" \
+    C_FFMPEG_VIDEO_FILTERS="`echo "${C_VIDEO_PAD_FILTER_FIX}" \
                 | ${SED} -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
                   # NOTE absence of ',' after the ':'
     eval set -- "${C_FFMPEG_VIDEO_FILTERS}" ;
@@ -2170,10 +2218,10 @@ else
   G_FFMPEG_FONTS_DIR="`echo "${C_FONTS_DIR}" \
                 | ${SED} -e 's#\([][ :,()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
 
-  if [ "${C_VIDEO_PAD_FILTER}" = '' ] ; then  # {
+  if [ "${C_VIDEO_PAD_FILTER_FIX}" = '' ] ; then  # {
     eval set -- "subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}" ;
   else  # }{
-    C_FFMPEG_VIDEO_FILTERS="`echo "${C_VIDEO_PAD_FILTER}" \
+    C_FFMPEG_VIDEO_FILTERS="`echo "${C_VIDEO_PAD_FILTER_FIX}" \
                 | ${SED} -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
                   # NOTE absence of ',' after the ':'
     eval set -- "${C_FFMPEG_VIDEO_FILTERS},subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}" ;
