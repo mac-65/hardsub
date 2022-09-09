@@ -795,6 +795,8 @@ preset::,\
 out-dir::,\
 trn-word-time-ms::,\
 trn-is-music,\
+trn-font-size-percent::,\
+trn-words-threshold::,\
 srt-default-font::,\
 srt-italics-font::,\
 srt-font-size-percent:: \
@@ -853,7 +855,7 @@ while true ; do  # {
     G_OPTION_SRT_FONT_SIZE="$(apply_percentage "$1" "$2" "${G_OPTION_SRT_FONT_SIZE}" 1)" ;
     echo -n "${ATTR_YELLOW_BOLD}  SETTING SubRip font size ${ATTR_CLR_BOLD}" ;
     echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_SRT_FONT_SIZE}" ;
-    echo    "${ATTR_CLR_BOLD}.${ATTR_OFF}" ;
+    echo    "${ATTR_CLR_BOLD} ($2%).${ATTR_OFF}" ;
       # TODO :: add a note about this to the comments IF the video really had SubRip subtitles
     shift 2;
     ;;
@@ -862,7 +864,7 @@ while true ; do  # {
     G_OPTION_TRN_FONT_SIZE="$(apply_percentage "$1" "$2" "${G_OPTION_TRN_FONT_SIZE}" 1)" ;
     echo -n "${ATTR_YELLOW_BOLD}  SETTING SubRip font size ${ATTR_CLR_BOLD}" ;
     echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_FONT_SIZE}" ;
-    echo    "${ATTR_CLR_BOLD}.${ATTR_OFF}" ;
+    echo    "${ATTR_CLR_BOLD} ($2%).${ATTR_OFF}" ;
       # TODO :: add a note about this to the comments IF the video really a transcript
     shift 2;
     ;;
@@ -872,6 +874,14 @@ while true ; do  # {
     echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's word time ${ATTR_CLR_BOLD}" ;
     echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_WORD_TIME}" ;
     echo    "${ATTR_CLR_BOLD}.${ATTR_OFF}" ;
+    shift 2;
+    ;;
+  --trn-words-threshold)
+    olde_value="${G_OPTION_TRN_WC_THRESHOLD}" ;
+    G_OPTION_TRN_WC_THRESHOLD="$(validate_integer "$1" "$2" 2 40)" ;
+    echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's word count threshold ${ATTR_CLR_BOLD}" ;
+    echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_WC_THRESHOLD}" ;
+    echo    "${ATTR_CLR_BOLD} words.${ATTR_OFF}" ;
     shift 2;
     ;;
   --preset)
