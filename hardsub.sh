@@ -72,13 +72,6 @@ fi
 #                            nv12 nv16 nv21 yuv420p10le yuv422p10le yuv444p10le
 #                            nv20le gray gray10le
 #
-# - https://trac.ffmpeg.org/wiki/HowToBurnSubtitlesIntoVideo
-#   ffmpeg has 2 text-based subtitle filters: SubRip and Advanced Substation
-#   Alpha.  There is no timed text support (have to externally convert it to,
-#   say SRT and use that subtitle file if I want to support it).
-#   Timed text, I believe, is what U-tube uses for auto-translation, etc.
-#
-# ffmpeg -y -i "test.mpg" -c:a copy -vf transpose=2,scale=240:-1 test.mp4
 ###############################################################################
 #
 # https://askubuntu.com/questions/366103/saving-more-corsor-positions-with-tput-in-bash-terminal
@@ -187,9 +180,16 @@ fi
 export HARDSUB_PID=$$ ; # I did NOT know about this one trick to exit :) ...
 
 abort() {
-   my_func="$1" ;
-   echo "Aborting from '${my_func}()'" >&2 ;
-   kill -s TERM $HARDSUB_PID ;
+   { set +x ; } >/dev/null 2>&1 ;
+
+   my_func="$1" ; shift ;
+   my_lineno="$1" ; shift ;
+
+   tput sgr0 ;
+   printf >&2 "${ATTR_ERROR} in '`tput setaf 3`%s`tput sgr0`()', line #%s\n" "${my_func}" "${my_lineno}" ;
+
+   kill -s SIGTERM $HARDSUB_PID ;
+   exit 1 ; # I missed this the first time ...
 }
 
 exit_handler() {
@@ -202,7 +202,7 @@ exit_handler() {
        && /bin/rm -f "${G_TRN_FILE}" ;
 }
 
-sigint_handler() {
+sigterm_handler() {
    { set +x ; } >/dev/null 2>&1 ;
 
    MY_REASON='ABORTED' ;
@@ -218,7 +218,7 @@ sigint_handler() {
 
    exit 1 ;
 }
-trap 'sigint_handler' HUP INT QUIT TERM ; # Don't include 'EXIT' here...
+trap 'sigterm_handler' HUP INT QUIT TERM ; # Don't include 'EXIT' here...
 trap 'exit_handler' EXIT ;
 
 
@@ -227,7 +227,7 @@ trap 'exit_handler' EXIT ;
 #  - ffmpeg
 #  - mkvtoolnix
 #  - sed + pcre2 (the library)
-#  - coreutils -- basename, cut, head, et. al.
+#  - coreutils -- basename, cut, head, tee, et. al.
 #  - fontconfig - Used to validate a fontname (e.g., '--srt-default-font=...)
 #  - grep       - which includes 'egrep' via script or hard-link to grep
 #  - bc         - for (re-)calculating font sizes (floating point math)
@@ -253,7 +253,7 @@ trap 'exit_handler' EXIT ;
 #                 with 'libtre' and can be optionally installed; other distros
 #                 may require building from source.
 #
-MY_SCRIPT="`basename \"$0\"`" ;
+C_SCRIPT_NAME="`basename \"$0\"`" ;
 DBG='' ;
 DBG=':' ;
 FFMPEG='/usr/local/bin/ffmpeg -y -nostdin -hide_banner' ;
@@ -265,7 +265,10 @@ FC_MATCH='/usr/bin/fc-match' ;
 FC_LIST='/usr/bin/fc-list' ;
 FC_SCAN='/usr/bin/fc-scan' ;
 DATE='/usr/bin/date' ;
+DATE_FORMAT='+%A, %B %e, %Y %X' ;
+DATE_FORMAT='' ;
 GREP='/usr/bin/grep --text' ; # saves the embarrassing "binary file matches"
+TEE='/usr/bin/tee' ;
 AGREP='/usr/bin/agrep' ;
 AGREP_FUZZY_ITERS=6 ;  # Number of agrep passes to make
 AGREP_FUZZY_ERRORS=2 ; # This value is mostly arbitrary and arrived at by testing.
@@ -340,7 +343,7 @@ G_OPTION_SRT_DEFAULT_FONT_NAME='Open Sans Semibold'  ; # The font for SubRip sub
 G_OPTION_SRT_ITALICS_FONT_NAME="${G_OPTION_SRT_DEFAULT_FONT_NAME}" ;
 
 G_OPTION_TRN_FONT_SIZE=44 ;     # The font size for Transcript subtitles
-G_OPTION_TRN_ENGLISH_FONT_NAME='NimbusRoman-Regular' ; # Font for Transcript subtitles
+G_OPTION_TRN_DEFAULT_FONT_NAME='Open Sans Semibold'  ; # Font for Transcript subtitles
 G_OPTION_TRN_IS_MUSIC='' ;      # If 'y', then the transcript is music lyrics
 G_OPTION_TRN_MUSIC_CHARS='♩♪♫'; # https://www.alt-codes.net/music_note_alt_codes.php
                                 # HI :: If the user specifies '--trn-is-music',
@@ -574,19 +577,23 @@ check_and_build_directory() {
     ###########################################################################
     # FAILURE :: exit; we've already printed an appropriate error message above
     #
-  abort ${FUNCNAME[0]} ;
+  abort ${FUNCNAME[0]} ${LINENO};
 }
 
 
 ###############################################################################
+# check_font_name  unused  option  font_name_to_test  no_message_if_1
+#
 # This function checks to see if the provided font is valid (as best it can).
 #   G_OPTION_SRT_DEFAULT_FONT_NAME="$(check_font_name "${G_OPTION_SRT_DEFAULT_FONT_NAME}" "$1" "$2" 0)" ;
 #
 check_font_name() {
-  local old_font_name="$1" ; shift ;
+  local old_font_name="$1" ; shift ;  # UNUSED
   local my_option="$1" ; shift ;
   local new_font_name="$1" ; shift ;
-  local try_2_validate="$1" ; shift ;
+  local no_message="$1" ; shift ; # if 1, then don't log any message
+
+  local rc=0 ;
 
   while : ; do  # {
     if [ "${new_font_name}" = '' ] ; then  # Pedantic, I know ...
@@ -604,14 +611,17 @@ check_font_name() {
     #    are installed with the distribution or by the user, etc.
     #
     local fc_match="$(${FC_MATCH} "${new_font_name}")" ;
-    if [ "${fc_match}" = "${G_INVALID_FONT_NAME}" ] ; then
-      {
-        echo -n "${ATTR_YELLOW_BOLD}`tput blink`WARNING - `tput sgr0; tput bold`" ;
-        echo -n "Unknown font name = '${ATTR_CYAN}${new_font_name}"
-        echo -ne "`tput sgr0; tput bold`',\n          "
-        echo    "${ATTR_MAGENTA}fontconfig will select some system default.`tput sgr0`"
-      } >&2 ;
-    fi
+    if [ "${fc_match}" = "${G_INVALID_FONT_NAME}" ] ; then  # {
+      rc=1 ;
+      if [ "${no_message}" -eq 0 ] ; then  # {
+        {
+          echo -n "${ATTR_YELLOW_BOLD}`tput blink`WARNING - `tput sgr0; tput bold`" ;
+          echo -n "Unknown font name = '${ATTR_CYAN}${new_font_name}"
+          echo -ne "`tput sgr0; tput bold`',\n          "
+          echo    "${ATTR_MAGENTA}fontconfig may select some system default.`tput sgr0`"
+        } >&2 ;
+      fi  # }
+    fi  # }
     local font_filename="$(echo "${fc_match}" | cut -d':' -f1)" ;
     local font_name="$(echo "${fc_match}" \
                      | ${SED} -e 's/^.*: "//' -e 's/".*$//')" ;
@@ -640,13 +650,13 @@ check_font_name() {
                    | ${SED} -e 's/^.*: "//' -e 's/".*$//')" ;
     echo "${new_font_name}" ;
 
-    return 0;
+    return ${rc} ;
   done ;  # }
 
     ###########################################################################
     # FAILURE :: exit; we've already printed an appropriate error message above
     #
-  abort ${FUNCNAME[0]} ;
+  abort ${FUNCNAME[0]} ${LINENO}; # We'll only see for a bug in this script.
 }
 
 
@@ -689,7 +699,7 @@ apply_percentage() {
     ###########################################################################
     # FAILURE :: exit; we've already printed an appropriate error message above
     #
-  abort ${FUNCNAME[0]} ;
+  abort ${FUNCNAME[0]} ${LINENO};
 }
 
 
@@ -736,7 +746,7 @@ validate_integer() {
     ###########################################################################
     # FAILURE :: exit; we've already printed an appropriate error message above
     #
-  abort ${FUNCNAME[0]} ;
+  abort ${FUNCNAME[0]} ${LINENO};
 }
 
 
@@ -757,6 +767,10 @@ initialize_variables() {
   G_OPTION_NO_SUBS='' ;
   G_OPTION_VERBOSE='' ;
 
+    ###########################################################################
+    # Every distro / installation could return a different value for the
+    # "best font available."  So, we capture it here ...
+    #
   G_INVALID_FONT_NAME="$(${FC_MATCH} '')" ;
 }
 
@@ -799,8 +813,9 @@ trn-font-size-percent::,\
 trn-words-threshold::,\
 srt-default-font::,\
 srt-italics-font::,\
-srt-font-size-percent:: \
-    -n "${ATTR_ERROR} ${ATTR_BLUE_BOLD}${MY_SCRIPT}${ATTR_YELLOW}" -- "$@"` ;
+srt-font-size-percent::,\
+font-check:: \
+    -n "${ATTR_ERROR} ${ATTR_BLUE_BOLD}${C_SCRIPT_NAME}${ATTR_YELLOW}" -- "$@"` ;
 
 if [ $? != 0 ] ; then
    my_usage 1 ;
@@ -840,13 +855,29 @@ while true ; do  # {
     G_VIDEO_OUT_DIR="$(check_and_build_directory "$1" "$2")" ;
     shift 2;
     ;;
+  --font-check)
+    font_name="$(check_font_name '' "$1" "$2" 0)" ; RC=$? ;
+    if [ ${RC} -eq 0 ] ; then
+      if [ "${font_name}" = "$2" ] ; then
+        printf "${ATTR_GREEN_BOLD}SUCCESS - ${ATTR_OFF}" ;
+        printf "'${ATTR_GREEN}%s${ATTR_OFF}' is an exact match " "$2" ;
+        printf "for the Style's font name\n" ;
+      else
+        printf "${ATTR_YELLOW_BOLD}SUCCESS - ${ATTR_OFF}" ;
+        printf "'${ATTR_YELLOW}%s${ATTR_OFF}' found; use " "$2" ;
+        printf "'${ATTR_YELLOW}%s${ATTR_OFF}' as the Style's font name\n" \
+               "${font_name}" ;
+    fi
+    fi
+    shift 2;
+    ;;
   --srt-default-font)
-    G_OPTION_SRT_DEFAULT_FONT_NAME="$(check_font_name "${G_OPTION_SRT_DEFAULT_FONT_NAME}" "$1" "$2" 1)" ;
+    G_OPTION_SRT_DEFAULT_FONT_NAME="$(check_font_name "${G_OPTION_SRT_DEFAULT_FONT_NAME}" "$1" "$2" 0)" ;
     echo "  NEW 'Default' FONT = '${G_OPTION_SRT_DEFAULT_FONT_NAME}'" ;
     shift 2;
     ;;
   --srt-italics-font)
-    G_OPTION_SRT_ITALICS_FONT_NAME="$(check_font_name "${G_OPTION_SRT_ITALICS_FONT_NAME}" "$1" "$2" 1)" ;
+    G_OPTION_SRT_ITALICS_FONT_NAME="$(check_font_name "${G_OPTION_SRT_ITALICS_FONT_NAME}" "$1" "$2" 0)" ;
     echo "  NEW 'Italics' FONT = '${G_OPTION_SRT_ITALICS_FONT_NAME}'" ;
     shift 2;
     ;;
@@ -862,7 +893,7 @@ while true ; do  # {
   --trn-font-size-percent)
     olde_value="${G_OPTION_TRN_FONT_SIZE}" ;
     G_OPTION_TRN_FONT_SIZE="$(apply_percentage "$1" "$2" "${G_OPTION_TRN_FONT_SIZE}" 1)" ;
-    echo -n "${ATTR_YELLOW_BOLD}  SETTING SubRip font size ${ATTR_CLR_BOLD}" ;
+    echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's font size ${ATTR_CLR_BOLD}" ;
     echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_FONT_SIZE}" ;
     echo    "${ATTR_CLR_BOLD} ($2%).${ATTR_OFF}" ;
       # TODO :: add a note about this to the comments IF the video really a transcript
@@ -1684,17 +1715,15 @@ write_a_subtitle_line() {
 # We'll use a *very* simple state machine to roll up the transcript into
 # the subtitle file.  Because it's 99% script, this part is pretty expensive.
 #
-# 0:05
-# hi everybody good morning how's it going today
-# 11:04
-# because i don't have to yell either right now
-# 1:02:18
-# that's a t there's a lower plate
-#
+#   0:05
+#   hi everybody good morning how's it going today
+#   11:04
+#   because i don't have to yell either right now
+#   1:02:18
+#   that's a t there's a lower plate
 # TO:
-#
-# Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-# Dialogue: 0,0:00:36.54,0:00:40.92,Default,,0,0,0,,♪ Sleep alone tonight ♪
+#   Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+#   Dialogue: 0,0:00:36.54,0:00:40.92,Default,,0,0,0,,♪ Sleep alone tonight ♪
 #
 add_transcript_text_to_subtitle() {
 
@@ -1783,7 +1812,7 @@ add_transcript_text_to_subtitle() {
        # TODO :: bail after so many 'transcript_errors' errors
     done  # }
 
-    (( previous_end_time += 7 )) ; # Yup, it's a hack — but a reasonalbe hack!
+    (( previous_end_time += 7 )) ; # Yup, it's a hack — but a reasonable hack!
     write_a_subtitle_line "${subtitle_file_out}"   \
                           "${previous_line}"       \
                           "${transcript_style}"    \
@@ -1807,41 +1836,85 @@ add_transcript_text_to_subtitle() {
 ###############################################################################
 # add_transcript_style_to_subtitle  subtitle_file_out  transcript_file_in
 #
+# RETURNS: name of the __last__ style that was read from the transcript file,
+#          0 if style's font was found with fonconfig, 1 otherwise.
+#
 # Copy the embedded style from the transcript file to the subtitle file.
+#
+# An embedded style definition (for the purposes of this script) must appear
+# in the transcript file as FIVE lines fully detailed with all of the necessary
+# fields with valid values - there isn't any substitutions done by this script.
+# For example, the 'Fontname'¹ must contain a valid font name for the OS that
+# ffmpeg can find during the encoding.
+#
+# These lines are (only the first few tokens of each line are shown):
+#    [V4+ Styles]
+#    Format: Name, Fontname, Fontsize, ...
+#    Style: Default,Open Sans Semibold,44,&H6000F8FF, ...
+#
+#    [Events]
+#    Format: Layer, Start, End, Style, ...
+#
+# There isn't any syntax checking performed on these, just some very simple
+# checks to catch potentially glaring errors.  If a duplicate style exists in
+# a transcript, or even the generated ASS file, libass will use the last
+# defined for __all__ of the 'Dialogue:' lines that reference that style.
+#
+# ¹ Yeah, I'd really like that, too.  The best that we can do is WARN the
+#   user if we can't "see" the font using the standard fc-* fontconfig tools.
+#
+#   The font could exist privately in a location specified by ffmpeg's
+#   'fontsdir=' switch on the encoding command line.  It's way too complex
+#   for any automated benefit to manually look at all of the fonts in the
+#   location specified by 'C_FONTS_DIR', or any unextracted font attachments
+#   in the source video.
 #
 add_transcript_style_to_subtitle() {
 
   local subtitle_file_out="$1" ; shift ;
   local transcript_file_in="$1" ; shift ;
   local style_in='' ;
-  local style_last='' ;
+
+  local rc=0 ;
 
     ###########################################################################
-    # Copy through the embedded style and perform some basic validity checking.
+    # Copy through the embedded style and check if fontconfig knows the font¹.
     #
-    # TODO :: if we successfully extract an embedded style from the transcript,
-    #         we should ensure that the font named in the 'Style:' is valid.
+    # Style: Default,Arial,16,...
+    # printf '%s' 'Style: Default,Arial,16, ...
     #
   ${GREP} '^#S' "${transcript_file_in}" \
-    | ${SED} -e 's/^#S[ ]*//'              \
+    | ${SED} -e 's/^#S[ ]*//'           \
     | while read text_line ; do  # {
-      printf "%s\n" "${text_line}" >> "${subtitle_file_out}" ;
 
-      echo "${text_line}" | ${GREP} -q '^Style: ' ; RC=$? ;
+      printf "%s\n" "${text_line}"         \
+        | ${TEE} -a "${subtitle_file_out}" \
+        | ${GREP} -q '^Style: ' ; RC=$? ;
+
       if [ "${RC}" -eq 0 ] ; then  # {
-         if [ "${style_last}" != '' ] ; then  # {
-           { echo -n "  ${ATTR_NOTE} Multiple '`tput bold`Style:`tput sgr0`'s detected, "
-             echo    "last was '${ATTR_CYAN}${style_last}${ATTR_OFF}' ..." ; } >&2 ;
-         fi  # }
-         style_in="$(echo "${text_line}"       \
-                   | ${SED} -e 's/,.*$//' -e 's/Style: //')" ;
-         style_last="${style_in}" ;
+        style_in="$(printf '%s' "${text_line}"       \
+            | ${SED} -e 's/,.*$//' -e 's/Style: //')" ;
+        style_font="$(printf '%s' "${text_line}"     \
+            | ${SED} -e 's/^[^,]*,//' -e 's/,.*//')" ;
+
+        printf >&2 '  >> STYLE "%s" = "%s"' "${style_in}" "${style_font}" ;
+        actual_font="$(check_font_name '' '' "${style_font}" 1)" ; RC=$? ;
+
+        if [ ${RC} -eq 0 ] ; then  # {
+          printf >&2 ', fontconfig returned "%s"' "${ATTR_GREEN_BOLD}${actual_font}" ;
+          rc=0 ;
+        else  # }{
+          printf >&2 ', %s fontconfig returned "%s"'               \
+                     "${ATTR_RED}`tput blink`WARNING -`tput sgr0`" \
+                     "${ATTR_YELLOW_BOLD}${actual_font}" ;
+          rc=1 ;
+        fi  # }
+        printf >&2 "${ATTR_OFF}\n" ;
       fi  # }
     done  # }
 
   echo "${style_in}" ;
-
-  return 0;
+  return ${rc} ;
 }
 
 
@@ -1882,7 +1955,7 @@ add_transcript_style_to_subtitle() {
 # The above is the English transcript for the (does not appear to be ©) video,
 # and the 'Style:' that will be assigned is 'English', something like -->
 #
-#   Style: English,'"${G_OPTION_TRN_ENGLISH_FONT_NAME}"','"${G_OPTION_TRN_FONT_SIZE}"',&H6000F8FF,&H000000FF,&H00101010,&H50A0A0A0,-1,0,0,0,100,100,0,0,1,2.75,0,2,100,100,12,1
+#   Style: English,'"${G_OPTION_TRN_DEFAULT_FONT_NAME}"','"${G_OPTION_TRN_FONT_SIZE}"',&H6000F8FF,&H000000FF,&H00101010,&H50A0A0A0,-1,0,0,0,100,100,0,0,1,2.75,0,2,100,100,12,1
 # ...
 #   Dialogue: 0,0:02:31.34,0:02:32.36,English,,0,0,0,,Thank you.
 #
@@ -1904,7 +1977,7 @@ convert_transcripts_to_ass() {
     echo -n "${ATTR_ERROR} "
     echo    "$(echo "${msg}" \
            | ${SED} -e "s/^\(.*\)'\([^']*\)'\(.*\)/\1'`tput bold; tput setaf 3`\2`tput sgr0`'\3/")" ;
-    abort ${FUNCNAME[0]} ;
+    abort ${FUNCNAME[0]} ${LINENO};
   fi  # }
 
   #############################################################################
@@ -1913,7 +1986,7 @@ convert_transcripts_to_ass() {
   #
   cat << HERE_DOC > "${subtitle_file_out}" ;
 [Script Info]
-; Script generated by ${MY_SCRIPT} on `${DATE}`
+; Script generated by ${C_SCRIPT_NAME} on `${DATE} ${DATE_FORMAT}`
 ScriptType: v4.00+
 PlayResX: 1280
 PlayResY: 720
@@ -1921,7 +1994,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: ${default_style},${G_OPTION_TRN_ENGLISH_FONT_NAME},${G_OPTION_TRN_FONT_SIZE},&H6000F8FF,&H000000FF,&H00101010,&H50A0A0A0,-1,0,0,0,100,100,0,0,1,2.75,0,2,100,100,12,1
+Style: ${default_style},${G_OPTION_TRN_DEFAULT_FONT_NAME},${G_OPTION_TRN_FONT_SIZE},&H6000F8FF,&H000000FF,&H00101010,&H50A0A0A0,-1,0,0,0,100,100,0,0,1,2.75,0,2,100,100,12,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -1933,25 +2006,34 @@ HERE_DOC
     local transcript_file_in="$1" ; shift ;
     local transcript_style="${default_style}" ;
 
-    echo "  >> FILE = '${transcript_file_in}' ..." ;
+    printf "  ${ATTR_YELLOW_BOLD}FOUND${ATTR_CLR_BOLD} transcript file " ;
+    printf "'${ATTR_YELLOW}%s${ATTR_CLR_BOLD}' ...\n" "${transcript_file_in}" ;
+    tput sgr0 ;
+##-- echo "  >> FILE = '${transcript_file_in}' ..." ;
 
       #########################################################################
-      # See if there's a style in the script.  We'll need to copy that FIRST
-      # before we begin to add the Dialogue text.  A script should only have 1
-      # style; all but the last will be ignored if they're the same style.
+      # See if there's one or more embedded styles in the script.
       #
-      # An embedded style must have the above (last) FIVE lines fully detailed
-      # with all of the necessary fields -- there isn't any substitutions done
-      # by this script.  There isn't any syntax checking on these, just some
-      # very simple checks to catch potentially glaring errors.
+      # We'll need to copy those 1st before we begin to add the Dialogue text
+      # because of the way libass (apparently) works, a 'Style:' must be
+      # defined before it is referenced by a 'Dialogue:' line (I have NOT
+      # done a lot of experimenting on this, though).  This isn't a complex
+      # requirement and just means making 2 read passes over the transcript.
       #
-      # We'll check the final generated subtitle file for duplicate styles,
-      # as that is probably the most likely bug a user could introduce. TODO
+      # A script can have multiple styles, but __only__ the last style is used
+      # for the script's dialogue.  This simple rule (hopefully) reduces the
+      # coding complexity of this script.  The other styles could be used for
+      # other things (TBD) and could be referenced by the script's dialogue
+      # either through manual edits of the transcript or by the built-in sed
+      # function (TODO).
+      #
+      # TODO We'll check the __FINAL__ generated subtitle file for duplicate styles, as
+      # that is probably the most likely bug a user could introduce. TODO
       #
       msg="$(${GREP} -c '^#S' "${transcript_file_in}" 2>&1)" ; RC=$? ;
       if   [ ${RC} -eq 0 ] ; then  # {
         if [ ${msg} -lt 5 ] ; then  # {
-          echo 'WARNING' ;
+          echo 'WARNING -- too few Style: line were found ..?' ;
         fi  # }
         (( number_of_embedded_styles++ ))
         local style_in="$(add_transcript_style_to_subtitle \
@@ -1961,7 +2043,7 @@ HERE_DOC
           echo    "'${ATTR_YELLOW}${transcript_file_in}${ATTR_OFF}', using '${default_style}'" ;
           style_in="${default_style}" ;
         else  # }{
-          echo -n "  ${ATTR_GREEN_BOLD}ADDING ${ATTR_OFF}"
+          echo -n "  ${ATTR_GREEN_BOLD}FIXME this is default transcript style ${ATTR_OFF}"
           echo -n "'${ATTR_BLUE_BOLD}Style: ${style_in},…${ATTR_OFF}'"
           echo    " found in '${ATTR_YELLOW}${transcript_file_in}${ATTR_OFF}' ..." ;
         fi  # }
@@ -1972,7 +2054,7 @@ HERE_DOC
         echo "  ${ATTR_TODO} no Style:, just add a message about using the default style" ;
       else  # }{
         echo "${ATTR_ERROR} TODO" ;
-        abort ${FUNCNAME[0]} ;
+        abort ${FUNCNAME[0]} ${LINENO};
       fi  # }
 
     # TODO :: foreach transcript file, add the ability to run a sed
