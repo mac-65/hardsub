@@ -54,6 +54,11 @@ fi
 # - Is this what's happening to the older videos?
 #   https://forum.videohelp.com/threads/397242-FFMPEG-Interlaced-MPEG2-video-to-x264-Issue
 #
+# ☻ It'd be really fun to add a title card to videos w/transcript file.  The
+#   user could could specify the background image and duration.  The duration
+#   would be added to all of the timestamps (of course) and libass could
+#   annimate the title on the title card (or whatever).  WISHLIST
+#
 #  > I've tried what poisondeathray suggested! And it works!  It gives me the
 #    impression it lost or it loses a a little bit of quality compared to the
 #    result I got when I used only (-c: v libx264 -crf) without
@@ -265,8 +270,8 @@ FC_MATCH='/usr/bin/fc-match' ;
 FC_LIST='/usr/bin/fc-list' ;
 FC_SCAN='/usr/bin/fc-scan' ;
 DATE='/usr/bin/date' ;
-DATE_FORMAT='+%A, %B %e, %Y %X' ;
 DATE_FORMAT='' ;
+DATE_FORMAT='+%A, %B %e, %Y %X' ;
 GREP='/usr/bin/grep --text' ; # saves the embarrassing "binary file matches"
 TEE='/usr/bin/tee' ;
 AGREP='/usr/bin/agrep' ;
@@ -857,18 +862,18 @@ while true ; do  # {
     ;;
   --font-check)
     font_name="$(check_font_name '' "$1" "$2" 0)" ; RC=$? ;
-    if [ ${RC} -eq 0 ] ; then
-      if [ "${font_name}" = "$2" ] ; then
+    if [ ${RC} -eq 0 ] ; then  # {
+      if [ "${font_name}" = "$2" ] ; then  # {
         printf "${ATTR_GREEN_BOLD}SUCCESS - ${ATTR_OFF}" ;
         printf "'${ATTR_GREEN}%s${ATTR_OFF}' is an exact match " "$2" ;
         printf "for the Style's font name\n" ;
-      else
+      else  # }{
         printf "${ATTR_YELLOW_BOLD}SUCCESS - ${ATTR_OFF}" ;
         printf "'${ATTR_YELLOW}%s${ATTR_OFF}' found; use " "$2" ;
         printf "'${ATTR_YELLOW}%s${ATTR_OFF}' as the Style's font name\n" \
                "${font_name}" ;
-    fi
-    fi
+      fi  # }
+    fi  # }
     shift 2;
     ;;
   --srt-default-font)
@@ -950,6 +955,8 @@ if [ $# -ne 1 ] ; then
   echo "${ATTR_ERROR} no input filename was specified" ;
   exit 2;
 fi
+
+G_SCRIPT_RUN_DATE="$(${DATE} "${DATE_FORMAT}")" ; # Do this just ONCE per/run.
 
 check_and_build_directory '' "${G_VIDEO_OUT_DIR}" ;
 check_and_build_directory '' "${C_SUBTITLE_OUT_DIR}" ;
@@ -1733,6 +1740,7 @@ add_transcript_text_to_subtitle() {
 
   local transcript_errors=0 ; # After X number of errors, we'll quit
   local transcript_lineno=0 ; # ...so the user can identify glitches
+  local transcript_blank_lines=0 ; # TWO adjacent timestamps is an EMPTY line
   local transcript_adjustments=0 ; # ..statistics
 
   local current_line='' ;
@@ -1752,15 +1760,15 @@ add_transcript_text_to_subtitle() {
     ###########################################################################
     # Walk through the transcript file:
     # - keep track of the line number in case there's an error with the line;
-    # - grep to remove any "magic" lines (#S, #H, etc.); and
-    # - sed to trim the line of leading / trailing SPACEs.
-    # - skip any EMPTY lines
+    # - grep to remove any "magic" lines (#S, #H, etc.);
+    # - sed to trim the line of leading / trailing SPACEs; and
+    # - skip any EMPTY lines (these are identified by adjacent timestamps).
     #
-  cat "${transcript_file_in}"              \
-    | sed -e 's/^#.*//'                    \
-          -e 's/^exit[[:space:]]*[0]*.*//' \
-          -e 's/^[[:space:]]*//'           \
-          -e 's/[[:space:]]*$//'           \
+  cat "${transcript_file_in}"                 \
+    | ${SED} -e 's/^#.*//'                    \
+             -e 's/^exit[[:space:]]*[0]*.*//' \
+             -e 's/^[[:space:]]*//'           \
+             -e 's/[[:space:]]*$//'           \
     | while read current_line ; do  # {
 
       (( transcript_lineno++ )) ;
@@ -1778,11 +1786,15 @@ add_transcript_text_to_subtitle() {
 
        if [ ${RC} -eq 0 ] ; then  # { FOUND A TIMESTAMP LINE!
          if [ ${my_state} -ne 0 ] ; then  # { DEBUG: s/b '-ne 0'
-           (( transcript_errors++ )) ;
+           (( transcript_blank_lines++ )) ;
            echo >&2 -n "  ${ATTR_NOTE} Found a timestamp where text was expected, " ;
            echo >&2 -n "${transcript_lineno}, " ;
            echo >&2    "'${ATTR_YELLOW}${current_line}$(tput sgr0)'" ;
-           # FIXME :: what to do?
+
+           echo >&2 'SKIPPING LINE'
+           (( transcript_blank_lines++ )) ;
+           previous_start_time="${current_start_time}" ;
+           continue ;
          fi  # }
 
          if [ ${skipped_lines} -ne 0 ] ; then
@@ -1809,7 +1821,7 @@ add_transcript_text_to_subtitle() {
          my_state=0 ;
        fi  # }
 
-       # TODO :: bail after so many 'transcript_errors' errors
+       # TODO :: bail after so many 'transcript_errors' errors ??
     done  # }
 
     (( previous_end_time += 7 )) ; # Yup, it's a hack — but a reasonable hack!
@@ -1829,6 +1841,7 @@ add_transcript_text_to_subtitle() {
 
     echo "transcript: lines = ${transcript_lineno}," ;
     echo "      adjustments = ${transcript_adjustments}," ;
+    echo "      blank lines = ${transcript_blank_lines}," ;
     echo "           errors = ${transcript_errors}." ;
 }
 
@@ -1838,6 +1851,9 @@ add_transcript_text_to_subtitle() {
 #
 # RETURNS: name of the __last__ style that was read from the transcript file,
 #          0 if style's font was found with fonconfig, 1 otherwise.
+#
+# NOTE :: Right now, there's no way to change any details about an embedded
+#         style from the CLI.
 #
 # Copy the embedded style from the transcript file to the subtitle file.
 #
@@ -1986,7 +2002,7 @@ convert_transcripts_to_ass() {
   #
   cat << HERE_DOC > "${subtitle_file_out}" ;
 [Script Info]
-; Script generated by ${C_SCRIPT_NAME} on `${DATE} ${DATE_FORMAT}`
+; Script generated by ${C_SCRIPT_NAME} on ${G_SCRIPT_RUN_DATE}
 ScriptType: v4.00+
 PlayResX: 1280
 PlayResY: 720
@@ -2009,7 +2025,6 @@ HERE_DOC
     printf "  ${ATTR_YELLOW_BOLD}FOUND${ATTR_CLR_BOLD} transcript file " ;
     printf "'${ATTR_YELLOW}%s${ATTR_CLR_BOLD}' ...\n" "${transcript_file_in}" ;
     tput sgr0 ;
-##-- echo "  >> FILE = '${transcript_file_in}' ..." ;
 
       #########################################################################
       # See if there's one or more embedded styles in the script.
@@ -2053,7 +2068,7 @@ HERE_DOC
         #       i.e., just assign a default "new" style to each transcript file?
         echo "  ${ATTR_TODO} no Style:, just add a message about using the default style" ;
       else  # }{
-        echo "${ATTR_ERROR} TODO" ;
+        echo "${ATTR_ERROR} ${msg}" ; # Just dump out the error from 'grep' ...
         abort ${FUNCNAME[0]} ${LINENO};
       fi  # }
 
@@ -2456,7 +2471,7 @@ if [ ! -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then  
     G_VIDEO_COMMENT='' ;
     if [ "${C_METADATA_COMMENT}" = '' ] ; then  # {
       G_VIDEO_COMMENT="`cat <<HERE_DOC
-Encoded on $(date)
+Encoded on ${G_SCRIPT_RUN_DATE}
 $(uname -sr ;
   ffmpeg -version | egrep '^ffmpeg ' | sed -e 's/version //' -e 's/ Copyright.*//' ;
   add_other_commandline_options ;)
