@@ -20,6 +20,17 @@ command line options to get anything to work.  For most use cases, no options
 or very few options are needed.  The idea is that this script can be used in
 a "batch" mode with many different types of source videos to produce a
 reasonable batch of output files in a unified video container.
+I'm going for a *plug-n-play* type of application.
+
+The script is 100% <code>/bin/bash</code> with lots of help from additional
+utilities to do much of the heavy lifting (<code>ffmpeg</code>,
+<code>mkvtoolnix</code>, and <code>jq</code> to name a few).
+Bash should be widely available and
+should be universally understood, so users should have no problems
+adding any customizations to suit their needs.
+
+As this script nears completion, I'll add examples to illustrate
+the basic (and maybe some more advanced) functionality.
 
 ## Getting Started
 For now, until *real* help is written, just execute <code>./hardsub</code>
@@ -57,7 +68,7 @@ Some of these text attributes are configurable on the command line
 (e.g. <code>--font-size=</code>), and
 more complex changes will have to be made in the script (for now).
 
-### Alpha Subtitle Feature
+### Transcript Subtitle Feature (alpha)
 The script has basic support for burning a transcript file as a subtitle.
 This follows the same convention for external subtitle files by putting the
 transcript file (except using a <code>.txt</code> filename extension) in
@@ -67,6 +78,15 @@ It's a little klunky and not super-robust, but there's a real use for this
 feature.  What I've found is that there are some neat videos in other languages
 that have a translation transcript.  This allows for offline viewing.
 
+#### Transcript Text Editing w/sed
+
+Additionally, if a <code>sed</code> script is provided
+(the basename of the video + '<b>.sed</b>' extension),
+the <code>sed</code> script will be run on each line of the <code>Text</code>
+field of the subtitle line.  While all of this adds processing cost,
+the overall time is significantly shorter that <code>ffmpeg</code>'s run time and
+the convenience makes up for that.
+
 The goal is to support (say) up to three transcripts for a video.
 This would be useful for Japanese music video where there are transcripts for:<br>
 - the English translation;
@@ -75,7 +95,6 @@ This would be useful for Japanese music video where there are transcripts for:<b
 
 Of course, fancy lyrical text effects are way, way beyond the scope of this script
 (and my current skill set as well 🤩).<br>
-I'm not 100% certain, but Korean media may follow a similar 3-script path.
 
 ## Prerequisites and Required Tools
 
