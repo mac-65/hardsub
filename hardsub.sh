@@ -1,3 +1,4 @@
+#                       transcript_sed_script    \
 #! /bin/bash
 
 shopt -s lastpipe ; # Needed for 'while read XXX ; do' loops
@@ -372,6 +373,7 @@ G_OPTION_GENRE='' ;
 
 G_VIDEO_OUT_DIR='OUT DIR' ;     # the re-encoded video's save location
 C_SUBTITLE_IN_DIR='IN SUBs' ;   # location for manually added subtitles
+C_SED_SCRIPTS_DIR="${C_SUBTITLE_IN_DIR}" ; # ... for now use the same location
 
   #############################################################################
   # Video filter setup area ...  Still rough around the edges.
@@ -1629,6 +1631,7 @@ my_strptime() {
 
 ###############################################################################
 # write_a_subtitle_line "${subtitle_file_out}"   \
+#                       transcript_sed_script    \
 #                       "${previous_line}"       \
 #                       "${transcript_style}"    \
 #                       "${previous_start_time}" \
@@ -1654,7 +1657,8 @@ my_strptime() {
 #
 write_a_subtitle_line() {
   subtitle_file_out="$1" ; shift ;
-  transcript_line="$1" ; shift ;
+  transcript_sed_script="$1" ; shift ;
+  transcript_line="$1" ; shift ;          # The 'Text' ...
   transcript_style="$1" ; shift ;
   transcript_start_time="$1" ; shift ;
   transcript_end_time="$1" ; shift ;
@@ -1662,6 +1666,17 @@ write_a_subtitle_line() {
   transcript_wc_threshold="$1" ; shift ;
 
   local adjustment_made=0 ;
+
+    ###########################################################################
+    # See if there's a sed script and run it on the subtitle's 'Text'.
+    # Note, we've already vetted the file to see if it's legitimate.
+    # Amazingly, this inefficient way of running sed doesn't cost too much
+    # (of course, it depends on the complexity of the actual sed script)!
+    #
+  if [ "${transcript_sed_script}" != '' ] ; then
+    transcript_line="$(printf "%s" "${transcript_line}" \
+                     | ${SED} "--file=${transcript_sed_script}")" ;
+  fi
 
   num_words="$(printf '%s' "${transcript_line}" | ${WC} -w)" ;
 
@@ -1718,7 +1733,7 @@ write_a_subtitle_line() {
 
 
 ###############################################################################
-# add_transcript_text_to_subtitle  subtitle_file_out  transcript_file_in  style
+# add_transcript_text_to_subtitle  subtitle_file_out  transcript_sed_script  transcript_file_in  style
 #
 # We'll use a *very* simple state machine to roll up the transcript into
 # the subtitle file.  Because it's 99% script, this part is pretty expensive.
@@ -1738,6 +1753,7 @@ write_a_subtitle_line() {
 add_transcript_text_to_subtitle() {
 
   local subtitle_file_out="$1" ; shift ;
+  local transcript_sed_script="$1" ; shift ;
   local transcript_file_in="$1" ; shift ;
   local transcript_style="$1" ; shift ;
 
@@ -1780,14 +1796,14 @@ add_transcript_text_to_subtitle() {
 
       (( transcript_lineno++ )) ;
 
-       if [ ${my_state} -eq 0 ] ; then  # { FIXME - this logic is NOT quite right
-          if [ "${current_line}" = '' ] ; then  # {
-            (( skipped_lines++ ))
-            continue ;
-          fi  # }
-       else  # }{
-         :
-       fi  # }
+      if [ ${my_state} -eq 0 ] ; then  # { FIXME - this logic is NOT quite right ??
+        if [ "${current_line}" = '' ] ; then  # {
+          (( skipped_lines++ ))
+          continue ;
+        fi  # }
+      else  # }{
+        :
+      fi  # }
 
        current_start_time="$(my_strptime ${my_state} "${current_line}")" ; RC=$? ;
 
@@ -1804,6 +1820,8 @@ add_transcript_text_to_subtitle() {
 
            (( transcript_blank_lines++ )) ;
            previous_start_time="${current_start_time}" ;
+           previous_transcript_lineno=${transcript_lineno} ;
+           previous_timestamp_line="${current_line}" ;
            continue ;
          fi  # }
 
@@ -1818,11 +1836,12 @@ add_transcript_text_to_subtitle() {
 
          local previous_end_time="${current_start_time}" ; # added for CLARITY
          if [ "${previous_line}" != '' ] ; then  # { should __only__ see this once!
-           write_a_subtitle_line "${subtitle_file_out}"   \
-                                 "${previous_line}"       \
-                                 "${transcript_style}"    \
-                                 "${previous_start_time}" \
-                                 "${previous_end_time}"   \
+           write_a_subtitle_line "${subtitle_file_out}"      \
+                                 "${transcript_sed_script}"  \
+                                 "${previous_line}"          \
+                                 "${transcript_style}"       \
+                                 "${previous_start_time}"    \
+                                 "${previous_end_time}"      \
                                  "${G_OPTION_TRN_WORD_TIME}" \
                                  "${G_OPTION_TRN_WC_THRESHOLD}" ;
            (( transcript_adjustments += $? )) ;
@@ -1838,11 +1857,12 @@ add_transcript_text_to_subtitle() {
   done  # }
 
   (( previous_end_time += 7 )) ; # Yup, it's a hack — but a reasonable hack!
-  write_a_subtitle_line "${subtitle_file_out}"   \
-                        "${previous_line}"       \
-                        "${transcript_style}"    \
-                        "${previous_start_time}" \
-                        "${previous_end_time}"   \
+  write_a_subtitle_line "${subtitle_file_out}"      \
+                        "${transcript_sed_script}"  \
+                        "${previous_line}"          \
+                        "${transcript_style}"       \
+                        "${previous_start_time}"    \
+                        "${previous_end_time}"      \
                         "${G_OPTION_TRN_WORD_TIME}" \
                         "${G_OPTION_TRN_WC_THRESHOLD}" ;
   (( transcript_adjustments += $? )) ;
@@ -1954,7 +1974,10 @@ add_transcript_style_to_subtitle() {
 
 ###############################################################################
 # convert_transcripts_to_ass "${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" \
-#                             ${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}*.txt ;
+#                             G_TRANSCRIPT_SED_SCRIPT                     \
+#                             ${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}*.txt
+#
+# NOTE :: arg #3 is either a single transcript file or a list of transcripts.
 #
 # Convert any transcript(s) for the video to Substation Alpha subtitles.
 #
@@ -1996,10 +2019,11 @@ add_transcript_style_to_subtitle() {
 # ¹This does not appear to be ©.
 #
 convert_transcripts_to_ass() {
-  set +x;
   local subtitle_file_out="$1" ; shift ;
+  local transcript_sed_script="$1" ; shift ;
 
   local default_style='Transcript' ;
+  RC=0 ;
 
     ###########################################################################
     # If the subtitle file's already there and is not EMPTY, don't do anything.
@@ -2036,6 +2060,7 @@ HERE_DOC
 
   local number_of_embedded_styles=0 ;
 
+  # TODO :: see if there's a legitimate sed script to run on the text.
   while [ $# -gt 0 ] ; do  # {
     local transcript_file_in="$1" ; shift ;
     local transcript_style="${default_style}" ;
@@ -2099,11 +2124,12 @@ HERE_DOC
       # Print out the processing time for __this__ transcript file
       #
     time { function_stats="$(add_transcript_text_to_subtitle \
-                         "${subtitle_file_out}"  \
-                         "${transcript_file_in}" \
-                         "${transcript_style}")" ; RC=$? ; # Always SUCCESS
-    printf '%s' "${function_stats}" ;
-    TIMEFORMAT="${ATTR_BLUE_BOLD}%2R seconds" ;
+                            "${subtitle_file_out}"     \
+                            "${transcript_sed_script}" \
+                            "${transcript_file_in}"    \
+                            "${transcript_style}")" ; RC=$? ; # Always SUCCESS
+      printf '%s' "${function_stats}" ;
+      TIMEFORMAT="${ATTR_BLUE_BOLD}%3lR" ; # bash(1) manual page
     }
     tput sgr0 ;
 
@@ -2192,7 +2218,14 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
   if [ "$(/bin/ls "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}"*.txt 2>/dev/null \
         | /bin/wc -l )" != '0' ] ; then
 
+    G_TRANSCRIPT_SED_SCRIPT="${C_SED_SCRIPTS_DIR}/${G_IN_BASENAME}.sed" ;
+    if ! [ -s "${G_TRANSCRIPT_SED_SCRIPT}" -a -r "${G_TRANSCRIPT_SED_SCRIPT}" ] ; then
+      G_TRANSCRIPT_SED_SCRIPT='' ;
+    fi
+    { set +x ; } >/dev/null 2>&1
+
     convert_transcripts_to_ass "${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" \
+                               "${G_TRANSCRIPT_SED_SCRIPT}"                 \
                                "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}"*.txt ;
 
     G_SUBTITLE_PATHNAME="${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass"
