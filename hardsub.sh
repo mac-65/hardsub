@@ -915,7 +915,8 @@ while true ; do  # {
   --trn-words-threshold)
     olde_value="${G_OPTION_TRN_WC_THRESHOLD}" ;
     G_OPTION_TRN_WC_THRESHOLD="$(validate_integer "$1" "$2" 2 40)" ;
-    echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's word count threshold ${ATTR_CLR_BOLD}" ;
+    echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's word count threshold "
+    echo -n "for End time recalculation${ATTR_CLR_BOLD} " ;
     echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_WC_THRESHOLD}" ;
     echo    "${ATTR_CLR_BOLD} words.${ATTR_OFF}" ;
     shift 2;
@@ -1753,6 +1754,9 @@ add_transcript_text_to_subtitle() {
 
   local skipped_lines=0 ;
   local previous_timestamp_line='' ;
+  local previous_transcript_lineno=0 ;
+
+  local rc=0 ; # Always SUCCESS for now ...
 
   echo >&2 "  IN ${FUNCNAME[0]} ..." ;
   echo >&2 "  TR '${transcript_file_in}' ..." ;
@@ -1789,8 +1793,13 @@ add_transcript_text_to_subtitle() {
 
        if [ ${RC} -eq 0 ] ; then  # { FOUND A TIMESTAMP LINE!
          if [ ${my_state} -ne 0 ] ; then  # { DEBUG: s/b '-ne 0'
-           echo >&2 -n "  ${ATTR_NOTE} Found a dangling timestamp - assuming an EMPTY line, " ;
-           echo >&2 -n "${transcript_lineno}, " ;
+           ####################################################################
+           # Looks good - the line times for the line before the EMPTY line
+           # are correct (i.e., doesn't exceed the EMPTY line's Start value).
+           # TODO :: Ensure that this handles multiple EMPTY lines ...
+           #
+           echo >&2 -n "  ${ATTR_NOTE} Found a orphaned timestamp - assuming an EMPTY line #" ;
+           echo >&2 -n "${previous_transcript_lineno}, " ;
            echo >&2    "'${ATTR_YELLOW}${previous_timestamp_line}$(tput sgr0)'" ;
 
            (( transcript_blank_lines++ )) ;
@@ -1798,7 +1807,9 @@ add_transcript_text_to_subtitle() {
            continue ;
          fi  # }
 
+         previous_transcript_lineno=${transcript_lineno} ;
          previous_timestamp_line="${current_line}" ;
+
          if [ ${skipped_lines} -ne 0 ] ; then
            echo -n "  SKIPPED ${skipped_lines} EMPTY OR OTHER '#' LINE(s) "
            echo    "WHILE LOOKING FOR TIMESTAMP ${ATTR_GREEN}(THIS IS OKAY)${ATTR_OFF}" ;
@@ -1824,27 +1835,32 @@ add_transcript_text_to_subtitle() {
        fi  # }
 
        # TODO :: bail after so many 'transcript_errors' errors ??
-    done  # }
+  done  # }
 
-    (( previous_end_time += 7 )) ; # Yup, it's a hack — but a reasonable hack!
-    write_a_subtitle_line "${subtitle_file_out}"   \
-                          "${previous_line}"       \
-                          "${transcript_style}"    \
-                          "${previous_start_time}" \
-                          "${previous_end_time}"   \
-                          "${G_OPTION_TRN_WORD_TIME}" \
-                          "${G_OPTION_TRN_WC_THRESHOLD}" ;
-    (( transcript_adjustments += $? )) ;
+  (( previous_end_time += 7 )) ; # Yup, it's a hack — but a reasonable hack!
+  write_a_subtitle_line "${subtitle_file_out}"   \
+                        "${previous_line}"       \
+                        "${transcript_style}"    \
+                        "${previous_start_time}" \
+                        "${previous_end_time}"   \
+                        "${G_OPTION_TRN_WORD_TIME}" \
+                        "${G_OPTION_TRN_WC_THRESHOLD}" ;
+  (( transcript_adjustments += $? )) ;
 
-    if [ ${skipped_lines} -ne 0 ] ; then
-      echo -n "  SKIPPED ${skipped_lines} EMPTY OR OTHER '#' LINE(s) "
-      echo    "AT THE END OF THE TRANSCRIPT ${ATTR_GREEN}(THIS IS OKAY)${ATTR_OFF}" ;
-    fi
+  if [ ${skipped_lines} -ne 0 ] ; then
+    echo -n "  SKIPPED ${skipped_lines} EMPTY OR OTHER '#' LINE(s) AT "
+    echo    "THE END OF THE TRANSCRIPT ${ATTR_GREEN_BOLD}(THIS IS OKAY)${ATTR_OFF}" ;
+  fi
 
-    echo "transcript: lines = ${transcript_lineno}," ;
-    echo "      adjustments = ${transcript_adjustments}," ;
-    echo "      blank lines = ${transcript_blank_lines}," ;
-    echo "           errors = ${transcript_errors}." ;
+  printf "  ${ATTR_YELLOW_BOLD}STATISTICS${ATTR_CLR_BOLD} for "
+  printf "'${ATTR_YELLOW}%s${ATTR_CLR_BOLD}':\n" "${transcript_file_in}" ;
+  echo "     total lines = ${transcript_lineno}," ;
+  echo "  recalculations = ${transcript_adjustments} (Dialogue: 'End' time)," ;
+  echo "     blank lines = ${transcript_blank_lines}," ;
+  echo "          errors = ${transcript_errors}," ;
+  echo "    process time was " ;
+
+  return ${rc} ;
 }
 
 
@@ -2079,15 +2095,23 @@ HERE_DOC
     #         adding the text to the subtitle file.  This could include
     #         things like spelling corrections, capitalizations, etc.
 
-###############################################################################
-    add_transcript_text_to_subtitle "${subtitle_file_out}"  \
-                                    "${transcript_file_in}" \
-                                    "${transcript_style}";
+      #########################################################################
+      # Print out the processing time for __this__ transcript file
+      #
+    time { function_stats="$(add_transcript_text_to_subtitle \
+                         "${subtitle_file_out}"  \
+                         "${transcript_file_in}" \
+                         "${transcript_style}")" ; RC=$? ; # Always SUCCESS
+    printf '%s' "${function_stats}" ;
+    TIMEFORMAT="${ATTR_BLUE_BOLD}%2R seconds" ;
+    }
+    tput sgr0 ;
+
   done  # }
 
   # TODO :: check for duplicate 'Style:'s in the generated subtitle file
 
-  { RC=$? ; set +x ; } >/dev/null 2>&1
+  { set +x ; } >/dev/null 2>&1
   return $RC;
 }
 
