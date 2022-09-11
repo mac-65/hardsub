@@ -1732,6 +1732,8 @@ write_a_subtitle_line() {
 #   Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 #   Dialogue: 0,0:00:36.54,0:00:40.92,Default,,0,0,0,,♪ Sleep alone tonight ♪
 #
+# TODO :: we don't check to ensure that the timestamps are always increasing ...
+#
 add_transcript_text_to_subtitle() {
 
   local subtitle_file_out="$1" ; shift ;
@@ -1750,6 +1752,7 @@ add_transcript_text_to_subtitle() {
   local previous_end_time='' ;
 
   local skipped_lines=0 ;
+  local previous_timestamp_line='' ;
 
   echo >&2 "  IN ${FUNCNAME[0]} ..." ;
   echo >&2 "  TR '${transcript_file_in}' ..." ;
@@ -1786,17 +1789,16 @@ add_transcript_text_to_subtitle() {
 
        if [ ${RC} -eq 0 ] ; then  # { FOUND A TIMESTAMP LINE!
          if [ ${my_state} -ne 0 ] ; then  # { DEBUG: s/b '-ne 0'
-           (( transcript_blank_lines++ )) ;
-           echo >&2 -n "  ${ATTR_NOTE} Found a timestamp where text was expected, " ;
+           echo >&2 -n "  ${ATTR_NOTE} Found a dangling timestamp - assuming an EMPTY line, " ;
            echo >&2 -n "${transcript_lineno}, " ;
-           echo >&2    "'${ATTR_YELLOW}${current_line}$(tput sgr0)'" ;
+           echo >&2    "'${ATTR_YELLOW}${previous_timestamp_line}$(tput sgr0)'" ;
 
-           echo >&2 'SKIPPING LINE'
            (( transcript_blank_lines++ )) ;
            previous_start_time="${current_start_time}" ;
            continue ;
          fi  # }
 
+         previous_timestamp_line="${current_line}" ;
          if [ ${skipped_lines} -ne 0 ] ; then
            echo -n "  SKIPPED ${skipped_lines} EMPTY OR OTHER '#' LINE(s) "
            echo    "WHILE LOOKING FOR TIMESTAMP ${ATTR_GREEN}(THIS IS OKAY)${ATTR_OFF}" ;
