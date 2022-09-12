@@ -1638,6 +1638,29 @@ my_strptime() {
   return $RC;
 }
 
+###############################################################################
+# cat 'IN SUBs/Eocene A - Goals [Nick Zentner] [Nov 13, 2021].txt'  | aspell list --mode=none --sug-mode=normal | sort -u #| awk '{for(i=1;i<=NF;i++){ $i=toupper(substr($i,1,1)) substr($i,2) }}1' | aspell list --mode=none --sug-mode=normal
+#
+# & yuki's 2 0: yuk's, kabuki's
+#
+# So, the theory is that when a transcript is auto-generated, all of the words
+# are correctly spelled, but without case distinction.
+#
+perform_spell_check() {
+  cat - ;
+}
+
+###############################################################################
+#
+run_user_sed_script() {
+  local sed_script="$1" ; shift ;
+
+  if [ "${sed_script}" != '' ] ; then
+    ${SED} "--file=${sed_script}" ;
+  else
+    cat - ;
+  fi
+}
 
 ###############################################################################
 # write_a_subtitle_line "${subtitle_file_out}"   \
@@ -1683,10 +1706,9 @@ write_a_subtitle_line() {
     # Amazingly, this inefficient way of running sed doesn't cost too much
     # (of course, it depends on the complexity of the actual sed script)!
     #
-  if [ "${transcript_sed_script}" != '' ] ; then
-    transcript_line="$(printf "%s" "${transcript_line}" \
-                     | ${SED} "--file=${transcript_sed_script}")" ;
-  fi
+  transcript_line="$(printf "%s" "${transcript_line}" \
+                   | perform_spell_check              \
+                   | run_user_sed_script "${transcript_sed_script}")" ;
 
   num_words="$(printf '%s' "${transcript_line}" | ${WC} -w)" ;
 
