@@ -166,6 +166,7 @@ export ATTR_OPEN_TIC="${ATTR_CLR_BOLD}${OPEN_TIC}" ;
 CLOSE_TIC='’' ;
 export ATTR_CLOSE_TIC="${ATTR_CLR_BOLD}${CLOSE_TIC}${ATTR_OFF}" ;
 
+# TODO :: I want to standardize more of these message templates.
 export ATTR_ERROR="${ATTR_RED_BOLD}ERROR -${ATTR_OFF}" ;
 export ATTR_NOTE="${ATTR_OFF}`tput setaf 11`NOTE -${ATTR_OFF}";
 export ATTR_TODO="${ATTR_OFF}`tput setaf 11; tput blink`TODO -${ATTR_OFF}";
@@ -344,8 +345,12 @@ G_OPTION_PRESETS=0 ;            # Number of preset selected on commandline.
 G_OPTION_SRT_FONT_SIZE=39 ;     # The Default font size for SRT subtitles
 G_OPTION_SRT_DEFAULT_FONT_NAME='NimbusRoman-Regular' ; # The font for SubRip subtitles
                                                        # from fc-match 'times'
+    ###########################################################################
+    # TODO :: Don't assume any default fonts exist on all linux distros;
+    #         use 'check_font_name()' to verify.
+    #
 G_OPTION_SRT_DEFAULT_FONT_NAME='Open Sans'           ; # ANOTHER TEST
-G_OPTION_SRT_DEFAULT_FONT_NAME='Open Sans Semibold'  ; # The font for SubRip subtitles
+G_OPTION_SRT_DEFAULT_FONT_NAME='Open Sans Semibold'  ; # 4 SubRip subtitles
 G_OPTION_SRT_ITALICS_FONT_NAME="${G_OPTION_SRT_DEFAULT_FONT_NAME}" ;
 
 G_OPTION_TRN_FONT_SIZE=44 ;     # The font size for Transcript subtitles
@@ -367,6 +372,7 @@ G_OPTION_TRN_WORD_TIME=375 ;    # We'll pick the shorter of the two times:
                                 # TODO default the GENRE to 'Transcript' if it's
                                 #      not provided on the command line.
 G_TRN_WORD_TIME_MIN=200 ;       # The minimum value allowed for 'G_OPTION_TRN_WORD_TIME'
+G_OPTION_TRN_SED_SCRIPT_DISABLE=0 ; # if 1, don't run any transcript sed script
 G_OPTION_TITLE='' ;
 G_OPTION_ARTIST='' ;
 G_OPTION_GENRE='' ;
@@ -818,6 +824,7 @@ trn-word-time-ms::,\
 trn-is-music,\
 trn-font-size-percent::,\
 trn-words-threshold::,\
+trn-disable-sed,\
 srt-default-font::,\
 srt-italics-font::,\
 srt-font-size-percent::,\
@@ -863,17 +870,17 @@ while true ; do  # {
     shift 2;
     ;;
   --font-check)
-    font_name="$(check_font_name '' "$1" "$2" 0)" ; RC=$? ;
-    if [ ${RC} -eq 0 ] ; then  # {
-      if [ "${font_name}" = "$2" ] ; then  # {
-        printf "${ATTR_GREEN_BOLD}SUCCESS - ${ATTR_OFF}" ;
-        printf "'${ATTR_GREEN}%s${ATTR_OFF}' is an exact match " "$2" ;
+    font_check_name="$(check_font_name '' "$1" "$2" 0)" ; RC=$? ;
+    if [ ${RC} -eq 0 -o ${RC} -eq 2 ] ; then  # {
+      if [ "${font_check_name}" = "$2" ] ; then  # {
+        printf "  ${ATTR_GREEN_BOLD}FONT CHECK - ${ATTR_OFF}" ;
+        printf "'${ATTR_GREEN}%s${ATTR_CLR_BOLD}' is an exact match " "$2" ;
         printf "for the Style's font name\n" ;
       else  # }{
-        printf "${ATTR_YELLOW_BOLD}SUCCESS - ${ATTR_OFF}" ;
+        printf "  ${ATTR_BROWN_BOLD}FONT CHECK - ${ATTR_OFF}" ;
         printf "'${ATTR_YELLOW}%s${ATTR_OFF}' found; use " "$2" ;
         printf "'${ATTR_YELLOW}%s${ATTR_OFF}' as the Style's font name\n" \
-               "${font_name}" ;
+               "${font_check_name}" ;
       fi  # }
     fi  # }
     shift 2;
@@ -922,6 +929,9 @@ while true ; do  # {
     echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_WC_THRESHOLD}" ;
     echo    "${ATTR_CLR_BOLD} words.${ATTR_OFF}" ;
     shift 2;
+    ;;
+  --trn-disable-sed)
+    G_OPTION_TRN_SED_SCRIPT_DISABLE=1 ; shift ;
     ;;
   --preset)
     (( G_OPTION_PRESETS++ ));
@@ -1951,7 +1961,10 @@ add_transcript_style_to_subtitle() {
         style_font="$(printf '%s' "${text_line}"     \
             | ${SED} -e 's/^[^,]*,//' -e 's/,.*//')" ;
 
-        printf >&2 '  >> STYLE "%s" = "%s"' "${style_in}" "${style_font}" ;
+        #WWWWW
+        printf >&2 "  ${ATTR_YELLOW_BOLD}FOUND -${ATTR_CLR_BOLD} embedded style " ;
+        printf >&2 "'${ATTR_BLUE_BOLD}%s${ATTR_CLR_BOLD}' using font '%s'" \
+                   "${style_in}" "${style_font}" ;
         actual_font="$(check_font_name '' '' "${style_font}" 1)" ; RC=$? ;
 
         if [ ${RC} -eq 0 ] ; then  # {
@@ -1974,7 +1987,7 @@ add_transcript_style_to_subtitle() {
 
 ###############################################################################
 # convert_transcripts_to_ass "${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" \
-#                             G_TRANSCRIPT_SED_SCRIPT                     \
+#                             G_TRN_SED_SCRIPT                     \
 #                             ${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}*.txt
 #
 # NOTE :: arg #3 is either a single transcript file or a list of transcripts.
@@ -2065,7 +2078,7 @@ HERE_DOC
     local transcript_file_in="$1" ; shift ;
     local transcript_style="${default_style}" ;
 
-    printf "  ${ATTR_YELLOW_BOLD}FOUND${ATTR_CLR_BOLD} transcript file " ;
+    printf "  ${ATTR_YELLOW_BOLD}FOUND -${ATTR_CLR_BOLD} transcript file " ;
     printf "'${ATTR_YELLOW}%s${ATTR_CLR_BOLD}' ...\n" "${transcript_file_in}" ;
     tput sgr0 ;
 
@@ -2218,14 +2231,27 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
   if [ "$(/bin/ls "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}"*.txt 2>/dev/null \
         | /bin/wc -l )" != '0' ] ; then
 
-    G_TRANSCRIPT_SED_SCRIPT="${C_SED_SCRIPTS_DIR}/${G_IN_BASENAME}.sed" ;
-    if ! [ -s "${G_TRANSCRIPT_SED_SCRIPT}" -a -r "${G_TRANSCRIPT_SED_SCRIPT}" ] ; then
-      G_TRANSCRIPT_SED_SCRIPT='' ;
-    fi
-    { set +x ; } >/dev/null 2>&1
+      #########################################################################
+      # A good UX design should be noisy about the right things ...
+      #
+    G_TRN_SED_SCRIPT="${C_SED_SCRIPTS_DIR}/${G_IN_BASENAME}.sed" ;
+    if [ -s "${G_TRN_SED_SCRIPT}" -a -r "${G_TRN_SED_SCRIPT}" ] ; then  # {
+      if [ "${G_OPTION_TRN_SED_SCRIPT_DISABLE}" -ne 0 ] ; then  # {
+        printf "  ${ATTR_BROWN_BOLD}DISABLED -${ATTR_CLR_BOLD} transcript sed script "
+        printf "'${ATTR_YELLOW}%s${ATTR_CLR_BOLD}'\n" "${G_TRN_SED_SCRIPT}" ;
+        G_TRN_SED_SCRIPT='' ;
+      else  # }{
+        printf "  ${ATTR_YELLOW_BOLD}FOUND -${ATTR_CLR_BOLD} transcript sed script " ;
+        printf "'${ATTR_YELLOW}%s${ATTR_CLR_BOLD}' ...\n" "${G_TRN_SED_SCRIPT}" ;
+      fi  # }
+    else  # }{
+      G_TRN_SED_SCRIPT='' ;
+    fi  # }
+
+    { set +x ; tput sgr0 ; } >/dev/null 2>&1
 
     convert_transcripts_to_ass "${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" \
-                               "${G_TRANSCRIPT_SED_SCRIPT}"                 \
+                               "${G_TRN_SED_SCRIPT}"                 \
                                "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}"*.txt ;
 
     G_SUBTITLE_PATHNAME="${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass"
