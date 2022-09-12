@@ -1641,10 +1641,20 @@ my_strptime() {
 ###############################################################################
 # cat 'IN SUBs/Eocene A - Goals [Nick Zentner] [Nov 13, 2021].txt'  | aspell list --mode=none --sug-mode=normal | sort -u #| awk '{for(i=1;i<=NF;i++){ $i=toupper(substr($i,1,1)) substr($i,2) }}1' | aspell list --mode=none --sug-mode=normal
 #
-# & yuki's 2 0: yuk's, kabuki's
+# echo "yuki's table's hotel's stephen's rocket's directorry sora's yui's" | hunspell
+# Hunspell 1.7.0
+#   & yuki's 2 0: yuk's, kabuki's
+#   + table
+#   + hotel
+#   & stephen's 4 23: Stephen's, step hen's, step-hen's, stepson's
+#   + rocket
+#   & directorry 3 42: directory, director, rectory
+#   & sora's 10 53: soar's, sore's, sort's, soda's, hora's, sofa's, Nora's, Lora's, Cora's, Dora's
+#   & yui's 5 60: yew's, yup's, yuk's, Sui's, Hui's
 #
 # So, the theory is that when a transcript is auto-generated, all of the words
-# are correctly spelled, but without case distinction.
+# are correctly spelled, but without case distinction.  Some content creators
+# don't edit beyond that since that's probably good enough for their purpose.
 #
 perform_spell_check() {
   cat - ;
