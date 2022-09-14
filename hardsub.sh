@@ -1798,6 +1798,9 @@ build_spell_correction_sed_script() {
     #    but not uppercased correctly.  We'll uppercase the word and use aspell
     #    to check it again.  If it succeeds, then we'll __add__ it to the sed
     #    dictionary.  So 'david' will be 's/david/David/g'
+    # TODO HACK!!! if I see "yui's", I know it's a possessive proper noun,
+    #         but I also know "yui" is a proper noun too :)
+    #
     #
     cat "${transcript_file_in}" \
       | aspell list --mode=none --sug-mode=normal \
@@ -1806,7 +1809,7 @@ build_spell_correction_sed_script() {
         else cat - ; \
         fi \
       | while read misspelt_word ; do  # {
-       :
+       : # best handled in a function, return sed snippet, else '' if can't auto-correct
       done  # }
 
   return 0 ;
