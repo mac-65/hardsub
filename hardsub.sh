@@ -172,6 +172,8 @@ export ATTR_NOTE="${ATTR_OFF}`tput setaf 11`NOTE -${ATTR_OFF}";
 export ATTR_TODO="${ATTR_OFF}`tput setaf 11; tput blink`TODO -${ATTR_OFF}";
 export ATTR_TOOL="${ATTR_GREEN_BOLD}" ;
 
+HS1_CHARACTERS='‘’∕“”…' ;
+
 export G_SED_FILE='' ;
 export G_TRN_FILE='' ; # Unused for now ...
 
@@ -234,7 +236,7 @@ trap 'exit_handler' EXIT ;
 #  - ffmpeg
 #  - mkvtoolnix
 #  - sed + pcre2 (the library)
-#  - coreutils -- basename, cut, head, tee, et. al.
+#  - coreutils -- basename, cut, head, tail, tee, et. al.
 #  - fontconfig - Used to validate a fontname (e.g., '--srt-default-font=...)
 #  - grep       - which includes 'egrep' via script or hard-link to grep
 #  - bc         - for (re-)calculating font sizes (floating point math)
@@ -259,6 +261,7 @@ trap 'exit_handler' EXIT ;
 #                 Recent Fedora distros have an 'agrep' package which links
 #                 with 'libtre' and can be optionally installed; other distros
 #                 may require building from source.
+#  - aspell     - used to build auto correct scripts for transcript files
 #
 C_SCRIPT_NAME="`basename \"$0\"`" ;
 DBG='' ;
@@ -274,7 +277,7 @@ FC_SCAN='/usr/bin/fc-scan' ;
 DATE='/usr/bin/date' ;
 DATE_FORMAT='' ;
 DATE_FORMAT='+%A, %B %e, %Y %X' ;
-GREP='/usr/bin/grep --text' ; # saves the embarrassing "binary file matches"
+GREP='/usr/bin/grep --text --colour=never' ; # saves the embarrassing "binary file matches"
 TEE='/usr/bin/tee' ;
 AGREP='/usr/bin/agrep' ;
 AGREP_FUZZY_ITERS=6 ;  # Number of agrep passes to make
@@ -373,6 +376,7 @@ G_OPTION_TRN_WORD_TIME=375 ;    # We'll pick the shorter of the two times:
                                 #      not provided on the command line.
 G_TRN_WORD_TIME_MIN=200 ;       # The minimum value allowed for 'G_OPTION_TRN_WORD_TIME'
 G_OPTION_TRN_SED_SCRIPT_DISABLE=0 ; # if 1, don't run any transcript sed script
+G_OPTION_TRN_LANGUAGE='English' ; # default to English, or '--trn-language='
 G_OPTION_TITLE='' ;
 G_OPTION_ARTIST='' ;
 G_OPTION_GENRE='' ;
@@ -380,6 +384,12 @@ G_OPTION_GENRE='' ;
 G_VIDEO_OUT_DIR='OUT DIR' ;     # the re-encoded video's save location
 C_SUBTITLE_IN_DIR='IN SUBs' ;   # location for manually added subtitles
 C_SED_SCRIPTS_DIR="${C_SUBTITLE_IN_DIR}" ; # ... for now use the same location
+
+  #############################################################################
+  # Tags which are used in transcript files: O, optional tag; R, required tag.
+  #
+C_TRN_TAG_LANGUAGE='^#L ' ;     # O, Language tag for spell correction
+export C_TRN_TAG_LANGUAGE ;
 
   #############################################################################
   # Video filter setup area ...  Still rough around the edges.
@@ -717,9 +727,9 @@ apply_percentage() {
 
 
 ###############################################################################
-# validate_integer  option  value  minimum  [maximum]
+# get_option_integer  option  value  minimum  [maximum]
 #
-validate_integer() {
+get_option_integer() {
   local my_option="$1" ; shift ;
   local in_value="$1" ; shift ;
   local in_minimum_value="$1" ; shift ;
@@ -760,6 +770,33 @@ validate_integer() {
     # FAILURE :: exit; we've already printed an appropriate error message above
     #
   abort ${FUNCNAME[0]} ${LINENO};
+}
+
+
+###############################################################################
+# get_option_string  option  value
+#
+# Get an option's simple string argument.
+#
+get_option_string() {
+  local my_option="$1" ; shift ;
+  local in_string="$1" ; shift ;
+
+  while : ; do  # {
+    if [ "${in_string}" = '' ] ; then  #  { Pedantic, I know ...
+      echo >&2 "${ATTR_ERROR} '${my_option}' requires an string." ;
+      (( err_lineno = $LINENO - 1 ));
+      break ;
+    fi  # }
+
+    printf "%s" "${in_string}" ;
+    return 0;
+  done  # }
+
+    ###########################################################################
+    # FAILURE :: exit; we've already printed an appropriate error message above
+    #
+  abort ${FUNCNAME[0]} ${err_lineno} ;
 }
 
 
@@ -824,6 +861,7 @@ trn-word-time-ms::,\
 trn-is-music,\
 trn-font-size-percent::,\
 trn-words-threshold::,\
+trn-language::,\
 trn-disable-sed,\
 srt-default-font::,\
 srt-italics-font::,\
@@ -915,7 +953,7 @@ while true ; do  # {
     ;;
   --trn-word-time-ms)
     olde_value="${G_OPTION_TRN_WORD_TIME}" ;
-    G_OPTION_TRN_WORD_TIME="$(validate_integer "$1" "$2" ${G_TRN_WORD_TIME_MIN})" ;
+    G_OPTION_TRN_WORD_TIME="$(get_option_integer "$1" "$2" ${G_TRN_WORD_TIME_MIN})" ;
     echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's word time ${ATTR_CLR_BOLD}" ;
     echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_WORD_TIME}" ;
     echo    "${ATTR_CLR_BOLD}.${ATTR_OFF}" ;
@@ -923,11 +961,18 @@ while true ; do  # {
     ;;
   --trn-words-threshold)
     olde_value="${G_OPTION_TRN_WC_THRESHOLD}" ;
-    G_OPTION_TRN_WC_THRESHOLD="$(validate_integer "$1" "$2" 2 40)" ;
+    G_OPTION_TRN_WC_THRESHOLD="$(get_option_integer "$1" "$2" 2 40)" ;
     echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's word count threshold "
     echo -n "for End time recalculation${ATTR_CLR_BOLD} " ;
     echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_WC_THRESHOLD}" ;
     echo    "${ATTR_CLR_BOLD} words.${ATTR_OFF}" ;
+    shift 2;
+    ;;
+  --trn-language)
+    G_OPTION_TRN_LANGUAGE="$(get_option_string "$1" "$2")" ;
+    printf "${ATTR_YELLOW_BOLD}  SETTING transcript's spell check language to " ;
+    printf "${ATTR_CLR_BOLD}'${ATTR_GREEN_BOLD}${G_OPTION_TRN_LANGUAGE}${ATTR_CLR_BOLD}'." ;
+    printf '\n' ;
     shift 2;
     ;;
   --trn-disable-sed)
@@ -1641,23 +1686,143 @@ my_strptime() {
 ###############################################################################
 # cat 'IN SUBs/Eocene A - Goals [Nick Zentner] [Nov 13, 2021].txt'  | aspell list --mode=none --sug-mode=normal | sort -u #| awk '{for(i=1;i<=NF;i++){ $i=toupper(substr($i,1,1)) substr($i,2) }}1' | aspell list --mode=none --sug-mode=normal
 #
-# echo "yuki's table's hotel's stephen's rocket's directorry sora's yui's" | hunspell
+###############################################################################
+###############################################################################
+# build_spell_correction_sed_script()
+#   transcript_file_in
+#   transcript_language
+#   sed_dictionary_basename
+#
+# echo "yuki's table's hotel's stephen's Stephen's rocket's directorry sora's yui's" | hunspell
 # Hunspell 1.7.0
-#   & yuki's 2 0: yuk's, kabuki's
-#   + table
-#   + hotel
-#   & stephen's 4 23: Stephen's, step hen's, step-hen's, stepson's
-#   + rocket
-#   & directorry 3 42: directory, director, rectory
-#   & sora's 10 53: soar's, sore's, sort's, soda's, hora's, sofa's, Nora's, Lora's, Cora's, Dora's
-#   & yui's 5 60: yew's, yup's, yuk's, Sui's, Hui's
+#    & yuki's 2 0: yuk's, kabuki's
+#    + table
+#    + hotel
+#    & stephen's 4 23: Stephen's, step hen's, step-hen's, stepson's
+#    + Stephen
+#    + rocket
+#    & directorry 3 52: directory, director, rectory
+#    & sora's 10 63: soar's, sore's, sort's, soda's, hora's, sofa's, Nora's, Lora's, Cora's, Dora's
+#    & yui's 5 70: yew's, yup's, yuk's, Sui's, Hui's
+#
+# echo "yuki's table's hotel's stephen's Stephen's rocket's directorry sora's yui's" | aspell list --mode=none --sug-mode=normal
+#      yuki's
+#      stephen's
+#      directorry
+#      sora's
+#      yui's
 #
 # So, the theory is that when a transcript is auto-generated, all of the words
 # are correctly spelled, but without case distinction.  Some content creators
 # don't edit beyond that since that's probably good enough for their purpose.
+# Sentences and punctuation doesn't exist in the few transcripts I've seen.
 #
-perform_spell_check() {
-  cat - ;
+# There is a difference between 'aspell' and 'hunspell' about flagged words:
+#
+# hunspell -->
+#   echo "yuki's hotel's stephen's Stephen's Stephened rocket's directorry sora's yui's" | hunspell
+#   Hunspell 1.7.0
+#      & yuki's 2 0: yuk's, kabuki's
+#      + hotel
+#      & stephen's 4 23: Stephen's, step hen's, step-hen's, stepson's
+#      + Stephen
+#      & Stephened 5 35: Stephen ed, Stephen-ed, Stephens, Stephen, Steepened
+#      + rocket
+#      & directorry 3 52: directory, director, rectory
+#      & sora's 10 63: soar's, sore's, sort's, soda's, hora's, sofa's, Nora's, Lora's, Cora's, Dora's
+#      & yui's 5 70: yew's, yup's, yuk's, Sui's, Hui's
+#
+# aspell -->
+#   echo "yuki's hotel's stephen's Stephen's Stephened rocket's directorry sora's yui's" | aspell list --mode=none --sug-mode=normal
+#        yuki's
+#        stephen's
+#        Stephened
+#        directorry
+#        sora's
+#        yui's
+#
+# What I've noticed:
+# - While both programs __work__, 'aspell' generates less noise to parse.
+#
+# For misspelled words reported by aspell:
+# > if the word is capitalized, assume it is an already correct proper noun
+#   that's NOT in aspell's dictionary.
+# > if the word ends in ‘'s’, then add it to script as a capitalized word.
+#   aspell will detect “Stephen’s” but not “stephen’s”.  If capitalizing the
+#   word fixes it in aspell, good (e.g. “stephen’s” ⇒ “Stephen’s”).
+#   Otherwise we assume it's a proper noun that is NOT in aspell's dictionary
+#   (foreign names) and the sed script will correct it; see above point.
+#
+build_spell_correction_sed_script() {
+  local transcript_file_in="$1" ; shift ;
+  local transcript_language="$1" ; shift ;
+  local sed_dictionary_basename="$1" ; shift ;
+
+  local sed_dictionary_file="${sed_dictionary_basename}.${transcript_language}.sed"
+
+  if [ -s "${sed_dictionary_file}" -a -r "${sed_dictionary_file}" ] ; then  # {
+    echo "${sed_dictionary_file}" ;
+    return 0 ;
+  else  # }{
+    printf "${ATTR_ERROR} Can't read '${sed_dictionary_file}'"
+    return 1 ; # FIXME abort()
+  fi  # }
+
+    ###########################################################################
+    # 'touch' is good enough as we don't need an atomic operation for this ...
+    #
+  touch "${sed_dictionary_file}" ; RC=$? ;
+  if ! [ ${RC} -eq 0 -a -w "${sed_dictionary_file}" ] ; then
+    return 1 ;
+  fi
+
+    ###########################################################################
+    # Handle a few annoying English 'aspell' issues here:
+    # - 'i' is not detected by aspell, but i'd, i'm, i've, etc., are.
+    #   This simple sed tackles all of those because the ' (along with SPACE,
+    #   the start and end of the line) is counted as a word boundary character.
+    #   'i' becomes 'I', 'i've' becomes 'I've', etc.
+    #
+    if [ "${transcript_language}" = 'English' ] ; then
+      printf '%s\n' 's/\<i\>/I/g' > "${sed_dictionary_file}" ;
+    fi
+
+    ###########################################################################
+    # I think I can do everything in a pipe ...
+# echo "yuki's table's hotel's stephen's Stephen's rocket's directorry sora's yui's" | aspell list --mode=none --sug-mode=normal
+    # 1. find and build a sorted, unique list of all of the misspelt words
+    #    using 'aspell'.
+    # 2. if the language is English, then exclude the 'i' cases we've already
+    #    handled above.
+    # 3. We're operating under the premise that the words are spelt correctly
+    #    but not uppercased correctly.  We'll uppercase the word and use aspell
+    #    to check it again.  If it succeeds, then we'll __add__ it to the sed
+    #    dictionary.  So 'david' will be 's/david/David/g'
+    #
+    cat "${transcript_file_in}" \
+      | aspell list --mode=none --sug-mode=normal \
+      | sort -u \
+      | if [ "${transcript_language}" = 'English' ] ; then grep -v "^i'" ; \
+        else cat - ; \
+        fi \
+      | while read misspelt_word ; do  # {
+       :
+      done  # }
+
+  return 0 ;
+}
+
+
+###############################################################################
+#
+run_spell_check_sed_script() {
+  local sed_script="$1" ; shift ;
+
+  if [ "${sed_script}" != '' ] ; then
+    ${SED} "--file=${sed_script}" ;
+  else
+    cat - ;
+  fi
 }
 
 ###############################################################################
@@ -1708,6 +1873,8 @@ write_a_subtitle_line() {
   transcript_word_time="$1" ; shift ;     # Not perfect, but s/b okay ...
   transcript_wc_threshold="$1" ; shift ;
 
+  spell_check_sed_script='' ; # TODO pass in from caller
+
   local adjustment_made=0 ;
 
     ###########################################################################
@@ -1716,8 +1883,8 @@ write_a_subtitle_line() {
     # Amazingly, this inefficient way of running sed doesn't cost too much
     # (of course, it depends on the complexity of the actual sed script)!
     #
-  transcript_line="$(printf "%s" "${transcript_line}" \
-                   | perform_spell_check              \
+  transcript_line="$(printf "%s" "${transcript_line}"                       \
+                   | run_spell_check_sed_script "${spell_check_sed_script}" \
                    | run_user_sed_script "${transcript_sed_script}")" ;
 
   num_words="$(printf '%s' "${transcript_line}" | ${WC} -w)" ;
@@ -1775,7 +1942,12 @@ write_a_subtitle_line() {
 
 
 ###############################################################################
-# add_transcript_text_to_subtitle  subtitle_file_out  transcript_sed_script  transcript_file_in  style
+# add_transcript_text_to_subtitle()
+#   transcript_file_in
+#   transcript_language
+#   transcript_style
+#   subtitle_file_out
+#   transcript_sed_script
 #
 # We'll use a *very* simple state machine to roll up the transcript into
 # the subtitle file.  Because it's 99% script, this part is pretty expensive.
@@ -1794,10 +1966,11 @@ write_a_subtitle_line() {
 #
 add_transcript_text_to_subtitle() {
 
+  local transcript_file_in="$1" ; shift ;
+  local transcript_language="$1" ; shift ;
+  local transcript_style="$1" ; shift ;
   local subtitle_file_out="$1" ; shift ;
   local transcript_sed_script="$1" ; shift ;
-  local transcript_file_in="$1" ; shift ;
-  local transcript_style="$1" ; shift ;
 
   local transcript_errors=0 ; # After X number of errors, we'll quit
   local transcript_lineno=0 ; # ...so the user can identify glitches
@@ -1828,9 +2001,14 @@ add_transcript_text_to_subtitle() {
     # - grep to remove any "magic" lines (#S, #H, etc.);
     # - sed to trim the line of leading / trailing SPACEs; and
     # - skip any EMPTY lines (these are identified by adjacent timestamps).
+    # - allow pass-thru comments beginning with '##', i.e. these will be
+    #   treated as subtitle text (as long as their preceded by a timestamp).
+    #   > a clever trick (discovered by accident) -->
+    #     sed 's/^#[^#]*//' without the end anchor ('$') produces identical
+    #     results to sed -e 's/^#[^#]*$//' -e 's/^##/#/'.
     #
   cat "${transcript_file_in}"                 \
-    | ${SED} -e 's/^#.*//'                    \
+    | ${SED} -e 's/^#[^#]*//'                 \
              -e 's/^exit[[:space:]]*[0]*.*//' \
              -e 's/^[[:space:]]*//'           \
              -e 's/[[:space:]]*$//'           \
@@ -1851,11 +2029,12 @@ add_transcript_text_to_subtitle() {
 
        if [ ${RC} -eq 0 ] ; then  # { FOUND A TIMESTAMP LINE!
          if [ ${my_state} -ne 0 ] ; then  # { DEBUG: s/b '-ne 0'
-           ####################################################################
-           # Looks good - the line times for the line before the EMPTY line
-           # are correct (i.e., doesn't exceed the EMPTY line's Start value).
-           # TODO :: Ensure that this handles multiple EMPTY lines ...
-           #
+
+             ##################################################################
+             # Looks good - the line times for the line before the EMPTY line
+             # are correct (i.e., doesn't exceed the EMPTY line's Start value).
+             # TODO :: Ensure that this handles multiple EMPTY lines ...
+             #
            echo >&2 -n "  ${ATTR_NOTE} Found a orphaned timestamp - assuming an EMPTY line #" ;
            echo >&2 -n "${previous_transcript_lineno}, " ;
            echo >&2    "'${ATTR_YELLOW}${previous_timestamp_line}$(tput sgr0)'" ;
@@ -1888,11 +2067,15 @@ add_transcript_text_to_subtitle() {
                                  "${G_OPTION_TRN_WC_THRESHOLD}" ;
            (( transcript_adjustments += $? )) ;
          fi  # }
+
          previous_start_time="${current_start_time}" ;
          my_state=1 ;
+
        else  # }{
+
          previous_line="${current_line}" ;
          my_state=0 ;
+
        fi  # }
 
        # TODO :: bail after so many 'transcript_errors' errors ??
@@ -2019,7 +2202,8 @@ add_transcript_style_to_subtitle() {
 
 ###############################################################################
 # convert_transcripts_to_ass "${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" \
-#                             G_TRN_SED_SCRIPT                     \
+#                             G_TRN_SED_SCRIPT                            \
+#                             C_SED_DICTIONARY_BASENAME                   \
 #                             ${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}*.txt
 #
 # NOTE :: arg #3 is either a single transcript file or a list of transcripts.
@@ -2066,8 +2250,10 @@ add_transcript_style_to_subtitle() {
 convert_transcripts_to_ass() {
   local subtitle_file_out="$1" ; shift ;
   local transcript_sed_script="$1" ; shift ;
+  local sed_dictionary_basename="$1" ; shift ;
 
   local default_style='Transcript' ;
+
   RC=0 ;
 
     ###########################################################################
@@ -2105,14 +2291,24 @@ HERE_DOC
 
   local number_of_embedded_styles=0 ;
 
-  # TODO :: see if there's a legitimate sed script to run on the text.
   while [ $# -gt 0 ] ; do  # {
     local transcript_file_in="$1" ; shift ;
     local transcript_style="${default_style}" ;
 
-    printf "  ${ATTR_YELLOW_BOLD}FOUND -${ATTR_CLR_BOLD} transcript file " ;
+    local transcript_language="$(${GREP} "${C_TRN_TAG_LANGUAGE}" \
+                                         "${transcript_file_in}" \
+                               | tail -1                         \
+                               | ${CUT} -d' ' -f2)" ;
+    local transcript_language_desc="$([ "${transcript_language}" = '' ] \
+            && echo '' || echo "${transcript_language} language ")" ; echo "'${T_LANG_DESC}'" ;
+
+    printf "  ${ATTR_YELLOW_BOLD}FOUND - "
+    printf "${ATTR_BLUE_BOLD}%s${ATTR_CLR_BOLD}" "${transcript_language_desc}" ;
+    printf "${ATTR_CLR_BOLD}transcript file " ;
     printf "'${ATTR_YELLOW}%s${ATTR_CLR_BOLD}' ...\n" "${transcript_file_in}" ;
     tput sgr0 ;
+
+#WWWW
 
       #########################################################################
       # See if there's one or more embedded styles in the script.
@@ -2133,46 +2329,58 @@ HERE_DOC
       # TODO We'll check the __FINAL__ generated subtitle file for duplicate styles, as
       # that is probably the most likely bug a user could introduce. TODO
       #
-      msg="$(${GREP} -c '^#S' "${transcript_file_in}" 2>&1)" ; RC=$? ;
-      if   [ ${RC} -eq 0 ] ; then  # {
-        if [ ${msg} -lt 5 ] ; then  # {
-          echo 'WARNING -- too few Style: line were found ..?' ;
-        fi  # }
-        (( number_of_embedded_styles++ ))
-        local style_in="$(add_transcript_style_to_subtitle \
-                           "${subtitle_file_out}" "${transcript_file_in}")" ; RC=$? ;
-        if [ ${RC} -ne 0 ] || [ "${style_in}" = '' ] ; then  # {
-          echo -n "  ${ATTR_NOTE} No 'Style:' was found in "
-          echo    "'${ATTR_YELLOW}${transcript_file_in}${ATTR_OFF}', using '${default_style}'" ;
-          style_in="${default_style}" ;
-        else  # }{
-          echo -n "  ${ATTR_GREEN_BOLD}FIXME this is default transcript style ${ATTR_OFF}"
-          echo -n "'${ATTR_BLUE_BOLD}Style: ${style_in},…${ATTR_OFF}'"
-          echo    " found in '${ATTR_YELLOW}${transcript_file_in}${ATTR_OFF}' ..." ;
-        fi  # }
-        transcript_style="${style_in}" ;
-      elif [ ${RC} -eq 1 ] ; then  # }{
-        # TODO :: should we allow multiple transcripts w/o any embedded styles?
-        #       i.e., just assign a default "new" style to each transcript file?
-        echo "  ${ATTR_TODO} no Style:, just add a message about using the default style" ;
-      else  # }{
-        echo "${ATTR_ERROR} ${msg}" ; # Just dump out the error from 'grep' ...
-        abort ${FUNCNAME[0]} ${LINENO};
+    msg="$(${GREP} -c '^#S' "${transcript_file_in}" 2>&1)" ; RC=$? ;
+    if   [ ${RC} -eq 0 ] ; then  # {
+      if [ ${msg} -lt 5 ] ; then  # {
+        echo 'WARNING -- too few Style: line were found ..?' ;
       fi  # }
+      (( number_of_embedded_styles++ ))
+      local style_in="$(add_transcript_style_to_subtitle \
+                         "${subtitle_file_out}"          \
+                         "${transcript_file_in}")" ; RC=$? ;
+      if [ ${RC} -ne 0 ] || [ "${style_in}" = '' ] ; then  # {
+        echo -n "  ${ATTR_NOTE} No 'Style:' was found in "
+        echo    "'${ATTR_YELLOW}${transcript_file_in}${ATTR_OFF}', using '${default_style}'" ;
+        style_in="${default_style}" ;
+      else  # }{
+        echo -n "  ${ATTR_GREEN_BOLD}FIXME this is default transcript style ${ATTR_OFF}"
+        echo -n "'${ATTR_BLUE_BOLD}Style: ${style_in},…,…${ATTR_OFF}'"
+         echo    " found in '${ATTR_YELLOW}${transcript_file_in}${ATTR_OFF}' ..." ;
+      fi  # }
+      transcript_style="${style_in}" ;
+    elif [ ${RC} -eq 1 ] ; then  # }{
+      # TODO :: should we allow multiple transcripts w/o any embedded styles?
+      #       i.e., just assign a default "new" style to each transcript file?
+      echo "  ${ATTR_TODO} no Style:, just add a message about using the default style" ;
+    else  # }{
+      echo "${ATTR_ERROR} ${msg}" ; # Just dump out the error from 'grep' ...
+      abort ${FUNCNAME[0]} ${LINENO};
+    fi  # }
 
-    # TODO :: foreach transcript file, add the ability to run a sed
-    #         script to clean-up any "things" in the transcript before
-    #         adding the text to the subtitle file.  This could include
-    #         things like spelling corrections, capitalizations, etc.
+      #########################################################################
+      # Build the spell-correction sed script here.  We __only__ do this once
+      # for the 'G_OPTION_TRN_LANGUAGE' option (default is 'English').
+      #
+    set -x
+    if [ "${G_OPTION_TRN_LANGUAGE}" = "${transcript_language}" ] ; then  # {
+      build_spell_correction_sed_script \
+                            "${transcript_file_in}"      \
+                            "${transcript_language}"     \
+                            "${sed_dictionary_basename}" \
+                            ;
+    fi  # }
+    { set +x ; } >/dev/null 2>&1
 
       #########################################################################
       # Print out the processing time for __this__ transcript file
       #
     time { function_stats="$(add_transcript_text_to_subtitle \
+                            "${transcript_file_in}"    \
+                            "${transcript_language}"   \
+                            "${transcript_style}"      \
                             "${subtitle_file_out}"     \
                             "${transcript_sed_script}" \
-                            "${transcript_file_in}"    \
-                            "${transcript_style}")" ; RC=$? ; # Always SUCCESS
+                            )"; RC=$? ; # Always SUCCESS
       printf '%s' "${function_stats}" ;
       TIMEFORMAT="${ATTR_BLUE_BOLD}%3lR" ; # bash(1) manual page
     }
@@ -2282,8 +2490,10 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
 
     { set +x ; tput sgr0 ; } >/dev/null 2>&1
 
+    C_SED_DICTIONARY_BASENAME="${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}" ;
     convert_transcripts_to_ass "${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" \
-                               "${G_TRN_SED_SCRIPT}"                 \
+                               "${G_TRN_SED_SCRIPT}"                        \
+                               "${C_SED_DICTIONARY_BASENAME}"               \
                                "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}"*.txt ;
 
     G_SUBTITLE_PATHNAME="${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass"
