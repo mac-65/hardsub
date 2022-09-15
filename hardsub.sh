@@ -1,4 +1,3 @@
-#                       transcript_sed_script    \
 #! /bin/bash
 
 shopt -s lastpipe ; # Needed for 'while read XXX ; do' loops
@@ -322,6 +321,7 @@ C_FFMPEG_PIXEL_FORMAT='yuvj420p'; # If it does NOT work, go back to 'yuv420p'.
 C_SUBTITLE_OUT_DIR='./SUBs' ;   # Where to save the extracted subtitle
 C_FONTS_DIR="${HOME}/.fonts" ;  # Where to save the font attachments
 
+G_OPTION_DRY_RUN='' ;           # Don't run ffmpeg, exit w/a code ...
 G_OPTION_NO_SUBS='' ;           # set to 'y' if '--no-subs' is specified
 G_OPTION_NO_MODIFY_SRT='' ;     # for an SRT subtitle, don't apply any sed
                                 # scripts to the generated ASS subtitle if
@@ -377,6 +377,7 @@ G_OPTION_TRN_WORD_TIME=375 ;    # We'll pick the shorter of the two times:
 G_TRN_WORD_TIME_MIN=200 ;       # The minimum value allowed for 'G_OPTION_TRN_WORD_TIME'
 G_OPTION_TRN_SED_SCRIPT_DISABLE=0 ; # if 1, don't run any transcript sed script
 G_OPTION_TRN_LANGUAGE='English' ; # default to English, or '--trn-language='
+G_OPTION_TRN_AMERICAN_ENGLISH=1 ; # ...things like Dr., Mr., and Mrs. and so on
 G_OPTION_TITLE='' ;
 G_OPTION_ARTIST='' ;
 G_OPTION_GENRE='' ;
@@ -846,8 +847,9 @@ fi
 # is an EMPTY string (''), then an "optional" argument was NOT provided.
 # I think this makes the command line easier to read and less error prone.
 #
-HS_OPTIONS=`getopt -o h::vc:f:yt:q: \
+HS_OPTIONS=`getopt -o dh::vc:f:yt:q: \
     --long help::,verbose,config:,fonts-dir:,copy-to:,quality:,\
+dry-run,\
 debug,\
 mono,\
 no-subs,\
@@ -891,6 +893,9 @@ while true ; do  # {
     ;;
 # --mux-subs)   # If there are subtitles, then also MUX them into the video
 #   ;;
+  --dry-run)
+    G_OPTION_DRY_RUN='y' ; shift ;
+    ;;
   --debug)
     G_OPTION_DEBUG='y' ; shift ;
     ;;
@@ -1683,75 +1688,75 @@ my_strptime() {
   return $RC;
 }
 
+
 ###############################################################################
-# cat 'IN SUBs/Eocene A - Goals [Nick Zentner] [Nov 13, 2021].txt'  | aspell list --mode=none --sug-mode=normal | sort -u #| awk '{for(i=1;i<=NF;i++){ $i=toupper(substr($i,1,1)) substr($i,2) }}1' | aspell list --mode=none --sug-mode=normal
+# build_sed_snippet(misspelt_word, transcript_language)
+# RETURNS :: sed_snippet
 #
+# For misspelled words reported by aspell:
+# 1. if the word is already capitalized, treat it as an already correct proper
+#    noun that's NOT in aspell's dictionary.  In this case, we won't build a
+#    sed snippet (we probably won't typically see this case).
+# 2. if the word ends in ‘'s’, then add it to script as a capitalized word.
+#    aspell will detect “Stephen’s” but not “stephen’s”.  If capitalizing the
+#    word fixes it in aspell, good (e.g. “stephen’s” ⇒ “Stephen’s”).
+#    Otherwise we assume it's a proper noun that is NOT in aspell's dictionary
+#    (foreign names) and the sed script will correct it; see above point.
+#    . Note that because of how regex word boundaries work, we only have to
+#      handle the base word of the possessive noun to correct both spellings.
+#    . There's a minor flaw in this thinking in that there may be a correctly
+#      spelt word that's not in aspell's dictionary, e.g. “aspell's”.
+#      This would most likely happen in very technical or content with a lot
+#      of foreign words.  We shouldn't see this at all since we'll only build
+#      a snippet if the uppercase version passes the aspell test, but bugs ...
+#      The user can use ‘--dry-run’ and edit the sed script in these cases.
+# 3. Uppercase the word.  If it passes aspell, then build the snippet.
+# 4. TODO :: Use the first aspell suggestion, if presented.
+#
+build_sed_snippet() {
+  misspelt_word="$1" ; shift ;
+  transcript_language="$1" ; shift ;
+
+    # CASE #1
+  if [[ "${misspelt_word}" =~ ^[[:upper:]] ]] ; then
+    printf '' ;
+    return ;
+  fi
+
+    # CASE #2
+  regx="'s$" ;
+  if [[ "${misspelt_word}" =~ $regx ]] ; then
+    word_base="${misspelt_word%\'s}" ; # stephen's ==> stephen
+    word_base_upper="${word_base^}" ; # stephen ==> Stephen
+    printf 's/\<%s\>/%s/g' "${word_base}" "${word_base_upper}" ;
+    return ;
+  fi
+
+    # CASE #3
+  misspelt_word_upper="${misspelt_word^}" ;
+  misspelt_word_correct="$(printf "${misspelt_word_upper}" | aspell list --mode=none)" ;
+  if [ "${misspelt_word_correct}" = '' ] ; then
+    printf 's/\<%s\>/%s/g' "${misspelt_word}" "${misspelt_word_upper}" ;
+    return ;
+  fi
+
+  printf '' ;
+}
+
+
 ###############################################################################
 ###############################################################################
-# build_spell_correction_sed_script()
-#   transcript_file_in
-#   transcript_language
-#   sed_dictionary_basename
-#
-# echo "yuki's table's hotel's stephen's Stephen's rocket's directorry sora's yui's" | hunspell
-# Hunspell 1.7.0
-#    & yuki's 2 0: yuk's, kabuki's
-#    + table
-#    + hotel
-#    & stephen's 4 23: Stephen's, step hen's, step-hen's, stepson's
-#    + Stephen
-#    + rocket
-#    & directorry 3 52: directory, director, rectory
-#    & sora's 10 63: soar's, sore's, sort's, soda's, hora's, sofa's, Nora's, Lora's, Cora's, Dora's
-#    & yui's 5 70: yew's, yup's, yuk's, Sui's, Hui's
-#
-# echo "yuki's table's hotel's stephen's Stephen's rocket's directorry sora's yui's" | aspell list --mode=none --sug-mode=normal
-#      yuki's
-#      stephen's
-#      directorry
-#      sora's
-#      yui's
+# build_spell_correction_sed_script(
+#   transcript_file_in,
+#   transcript_language,
+#   sed_dictionary_basename)
+# RETURNS :: sed_dictionary_file
 #
 # So, the theory is that when a transcript is auto-generated, all of the words
 # are correctly spelled, but without case distinction.  Some content creators
 # don't edit beyond that since that's probably good enough for their purpose.
-# Sentences and punctuation doesn't exist in the few transcripts I've seen.
-#
-# There is a difference between 'aspell' and 'hunspell' about flagged words:
-#
-# hunspell -->
-#   echo "yuki's hotel's stephen's Stephen's Stephened rocket's directorry sora's yui's" | hunspell
-#   Hunspell 1.7.0
-#      & yuki's 2 0: yuk's, kabuki's
-#      + hotel
-#      & stephen's 4 23: Stephen's, step hen's, step-hen's, stepson's
-#      + Stephen
-#      & Stephened 5 35: Stephen ed, Stephen-ed, Stephens, Stephen, Steepened
-#      + rocket
-#      & directorry 3 52: directory, director, rectory
-#      & sora's 10 63: soar's, sore's, sort's, soda's, hora's, sofa's, Nora's, Lora's, Cora's, Dora's
-#      & yui's 5 70: yew's, yup's, yuk's, Sui's, Hui's
-#
-# aspell -->
-#   echo "yuki's hotel's stephen's Stephen's Stephened rocket's directorry sora's yui's" | aspell list --mode=none --sug-mode=normal
-#        yuki's
-#        stephen's
-#        Stephened
-#        directorry
-#        sora's
-#        yui's
-#
-# What I've noticed:
-# - While both programs __work__, 'aspell' generates less noise to parse.
-#
-# For misspelled words reported by aspell:
-# > if the word is capitalized, assume it is an already correct proper noun
-#   that's NOT in aspell's dictionary.
-# > if the word ends in ‘'s’, then add it to script as a capitalized word.
-#   aspell will detect “Stephen’s” but not “stephen’s”.  If capitalizing the
-#   word fixes it in aspell, good (e.g. “stephen’s” ⇒ “Stephen’s”).
-#   Otherwise we assume it's a proper noun that is NOT in aspell's dictionary
-#   (foreign names) and the sed script will correct it; see above point.
+# Sentence __endings__ and punctuation doesn't exist in the few transcripts
+# I've seen.
 #
 build_spell_correction_sed_script() {
   local transcript_file_in="$1" ; shift ;
@@ -1778,7 +1783,9 @@ build_spell_correction_sed_script() {
     #
   touch "${sed_dictionary_file}" ; RC=$? ;
   if ! [ ${RC} -eq 0 -a -w "${sed_dictionary_file}" ] ; then
-    return 1 ;
+    printf "${ATTR_ERROR} Can't create '${ATTR_YELLOW}%s${ATTR_OFF}'\n" \
+           "${sed_dictionary_file}" ;
+    abort ${FUNCNAME[0]} ${LINENO};
   fi
 
     ###########################################################################
@@ -1789,37 +1796,61 @@ build_spell_correction_sed_script() {
     #   with SPACE, and the start / end of the line) is counted as a word
     #   boundary character.  So, 'i' becomes 'I', 'i've' becomes 'I've', etc.
     #
-    if [ "${transcript_language}" = 'English' ] ; then
+    if [ "${transcript_language}" = 'English' ] ; then  # {
       printf '%s\n' 's/\<i\>/I/g' > "${sed_dictionary_file}" ;
-    fi
+      printf '%s\n' 's/\<michaelena\>/Michaelena/g' >> "${sed_dictionary_file}" ;
+
+      if [ ${G_OPTION_TRN_AMERICAN_ENGLISH} -eq 1 ] ; then  # {
+        printf '%s\n' 's/\<dr\>/Dr./g' >> "${sed_dictionary_file}" ;
+        printf '%s\n' 's/\<mr\>/Mr./g' >> "${sed_dictionary_file}" ;
+        printf '%s\n' 's/\<mrs\>/Mrs./g' >> "${sed_dictionary_file}" ;
+      fi  # }
+
+        #######################################################################
+        # There's no look-ahead across lines to catch compound proper nouns,
+        # so this is a feeble attempt to try to get some common cases ...
+        #
+        # Anything beyond these U.S. states could be added to the general-
+        # purpose sed script (cities, etc.)
+        #
+      printf '%s\n' 's/\<new hampshire\>/New Hampshire/g' >> "${sed_dictionary_file}" ;
+      printf '%s\n' 's/\<new jersey\>/New Jersey/g' >> "${sed_dictionary_file}" ;
+      printf '%s\n' 's/\<new mexico\>/New Mexico/g' >> "${sed_dictionary_file}" ;
+      printf '%s\n' 's/\<new york\>/New York/g' >> "${sed_dictionary_file}" ;
+      printf '%s\n' 's/\<north carolina\>/North Carolina/g' >> "${sed_dictionary_file}" ;
+      printf '%s\n' 's/\<north dakota\>/North Dakota/g' >> "${sed_dictionary_file}" ;
+      printf '%s\n' 's/\<rhode island\>/Rhode Island/g' >> "${sed_dictionary_file}" ;
+      printf '%s\n' 's/\<south carolina\>/South Carolina/g' >> "${sed_dictionary_file}" ;
+      printf '%s\n' 's/\<south dakota\>/South Dakota/g' >> "${sed_dictionary_file}" ;
+    fi  # }
 
     ###########################################################################
     # I think I can do everything in a pipe ...
-# echo "yuki's table's hotel's stephen's Stephen's rocket's directorry sora's yui's" | aspell list --mode=none --sug-mode=normal
     # 1. find and build a sorted, unique list of all of the misspelt words
     #    using 'aspell'.
     # 2. if the language is English, then exclude the 'i' cases we've already
     #    handled above.
-    # 3. We're operating under the premise that the words are spelt correctly
+    # 3. We're operating under the premise that the words are correctly spelt
     #    but not uppercased correctly.  We'll uppercase the word and use aspell
     #    to check it again.  If it succeeds, then we'll __add__ it to the sed
-    #    dictionary.  So 'david' will be 's/david/David/g'
-    # TODO HACK!!! if I see "yui's", I know it's a possessive proper noun,
-    #         but I also know "yui" is a proper noun too :)
+    #    dictionary.  So 'david' will be 's/\<david\>/David/g'.
     #
     cat "${transcript_file_in}" \
-      | aspell list --mode=none --sug-mode=normal \
+      | aspell list --mode=none \
       | sort -u \
       | if [ "${transcript_language}" = 'English' ] ; then grep -v "^i'" ; \
         else cat - ; \
         fi \
       | while read misspelt_word ; do  # {
-        : # best handled in a function, return sed snippet, else '' if can't auto-correct
-        sed_snippet="$(build_sed_snippet "${misspelt_word}", "${transcript_language}")" ;
+
+        sed_snippet="$(build_sed_snippet "${misspelt_word}" "${transcript_language}")" ;
         if [ "${sed_snippet}" != '' ] ; then  # {
           printf '%s\n' "${sed_snippet}" >> "${sed_dictionary_file}" ;
         fi  # }
       done  # }
+
+  { set +x ; } >/dev/null 2>&1
+  printf '%s' "${sed_dictionary_file}" ;
 
   return 0 ;
 }
@@ -1837,6 +1868,7 @@ run_spell_check_sed_script() {
   fi
 }
 
+
 ###############################################################################
 #
 run_user_sed_script() {
@@ -1852,6 +1884,7 @@ run_user_sed_script() {
 ###############################################################################
 # write_a_subtitle_line "${subtitle_file_out}"   \
 #                       transcript_sed_script    \
+#                       sed_dictionary_file      \
 #                       "${previous_line}"       \
 #                       "${transcript_style}"    \
 #                       "${previous_start_time}" \
@@ -1878,14 +1911,13 @@ run_user_sed_script() {
 write_a_subtitle_line() {
   subtitle_file_out="$1" ; shift ;
   transcript_sed_script="$1" ; shift ;
+  sed_dictionary_file="$1" ; shift ;
   transcript_line="$1" ; shift ;          # The 'Text' ...
   transcript_style="$1" ; shift ;
   transcript_start_time="$1" ; shift ;
   transcript_end_time="$1" ; shift ;
   transcript_word_time="$1" ; shift ;     # Not perfect, but s/b okay ...
   transcript_wc_threshold="$1" ; shift ;
-
-  spell_check_sed_script='' ; # TODO pass in from caller
 
   local adjustment_made=0 ;
 
@@ -1896,7 +1928,7 @@ write_a_subtitle_line() {
     # (of course, it depends on the complexity of the actual sed script)!
     #
   transcript_line="$(printf "%s" "${transcript_line}"                       \
-                   | run_spell_check_sed_script "${spell_check_sed_script}" \
+                   | run_spell_check_sed_script "${sed_dictionary_file}" \
                    | run_user_sed_script "${transcript_sed_script}")" ;
 
   num_words="$(printf '%s' "${transcript_line}" | ${WC} -w)" ;
@@ -1960,6 +1992,7 @@ write_a_subtitle_line() {
 #   transcript_style
 #   subtitle_file_out
 #   transcript_sed_script
+#   sed_dictionary_file
 #
 # We'll use a *very* simple state machine to roll up the transcript into
 # the subtitle file.  Because it's 99% script, this part is pretty expensive.
@@ -1983,6 +2016,7 @@ add_transcript_text_to_subtitle() {
   local transcript_style="$1" ; shift ;
   local subtitle_file_out="$1" ; shift ;
   local transcript_sed_script="$1" ; shift ;
+  local sed_dictionary_file="$1" ; shift ;
 
   local transcript_errors=0 ; # After X number of errors, we'll quit
   local transcript_lineno=0 ; # ...so the user can identify glitches
@@ -2071,6 +2105,7 @@ add_transcript_text_to_subtitle() {
          if [ "${previous_line}" != '' ] ; then  # { should __only__ see this once!
            write_a_subtitle_line "${subtitle_file_out}"      \
                                  "${transcript_sed_script}"  \
+                                 "${sed_dictionary_file}"    \
                                  "${previous_line}"          \
                                  "${transcript_style}"       \
                                  "${previous_start_time}"    \
@@ -2096,6 +2131,7 @@ add_transcript_text_to_subtitle() {
   (( previous_end_time += 7 )) ; # Yup, it's a hack — but a reasonable hack!
   write_a_subtitle_line "${subtitle_file_out}"      \
                         "${transcript_sed_script}"  \
+                        "${sed_dictionary_file}"    \
                         "${previous_line}"          \
                         "${transcript_style}"       \
                         "${previous_start_time}"    \
@@ -2188,7 +2224,6 @@ add_transcript_style_to_subtitle() {
         style_font="$(printf '%s' "${text_line}"     \
             | ${SED} -e 's/^[^,]*,//' -e 's/,.*//')" ;
 
-        #WWWWW
         printf >&2 "  ${ATTR_YELLOW_BOLD}FOUND -${ATTR_CLR_BOLD} embedded style " ;
         printf >&2 "'${ATTR_BLUE_BOLD}%s${ATTR_CLR_BOLD}' using font '%s'" \
                    "${style_in}" "${style_font}" ;
@@ -2320,8 +2355,6 @@ HERE_DOC
     printf "'${ATTR_YELLOW}%s${ATTR_CLR_BOLD}' ...\n" "${transcript_file_in}" ;
     tput sgr0 ;
 
-#WWWW
-
       #########################################################################
       # See if there's one or more embedded styles in the script.
       #
@@ -2373,13 +2406,12 @@ HERE_DOC
       # Build the spell-correction sed script here.  We __only__ do this once
       # for the 'G_OPTION_TRN_LANGUAGE' option (default is 'English').
       #
-    set -x
     if [ "${G_OPTION_TRN_LANGUAGE}" = "${transcript_language}" ] ; then  # {
-      build_spell_correction_sed_script \
+      sed_dictionary_file="$(build_spell_correction_sed_script \
                             "${transcript_file_in}"      \
                             "${transcript_language}"     \
                             "${sed_dictionary_basename}" \
-                            ;
+                            )" ;
     fi  # }
     { set +x ; } >/dev/null 2>&1
 
@@ -2392,6 +2424,7 @@ HERE_DOC
                             "${transcript_style}"      \
                             "${subtitle_file_out}"     \
                             "${transcript_sed_script}" \
+                            "${sed_dictionary_file}"   \
                             )"; RC=$? ; # Always SUCCESS
       printf '%s' "${function_stats}" ;
       TIMEFORMAT="${ATTR_BLUE_BOLD}%3lR" ; # bash(1) manual page
@@ -2784,7 +2817,8 @@ fi
 ###############################################################################
 # This is where the hammer meets the road!
 #
-if [ ! -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then  # {
+if [ ! -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" \
+       -a "${G_OPTION_DRY_RUN}" = '' ] ; then  # {
 
   RC=0 ;
   if   [ "${G_OPTION_NO_COMMENT}" = 'y' ] \
@@ -2833,9 +2867,17 @@ HERE_DOC
     { RC=$? ; set +x ; } >/dev/null 2>&1
 
   fi  # }
+
+  run_desc="  ${ATTR_GREEN_BOLD}FFMPEG ENCODING COMPLETE" ;
+  printf "${run_desc}${ATTR_CLR_BOLD} '%s' ...\n" "${G_IN_VIDEO_FILE}" ;
+
 else  # }{
 
-  echo "$(tput setaf 3 ; tput bold)COMPLETED$(tput sgr0; tput bold) '${G_IN_VIDEO_FILE}'$(tput sgr0) ..." ;
+  run_desc="  $([ "${G_OPTION_DRY_RUN}" = '' ] \
+            && echo "${ATTR_BLUE_BOLD}"       \
+            || echo "${ATTR_YELLOW_BOLD}DRY RUN ")COMPLETE" ;
+  printf "${run_desc}${ATTR_CLR_BOLD} '%s' ...\n" "${G_IN_VIDEO_FILE}" ;
+  tput sgr0 ;
   RC=0 ;
 fi  # }
 
