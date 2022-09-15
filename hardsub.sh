@@ -236,7 +236,7 @@ trap 'exit_handler' EXIT ;
 #  - ffmpeg
 #  - mkvtoolnix
 #  - sed + pcre2 (the library)
-#  - coreutils -- basename, cut, head, tail, tee, et. al.
+#  - coreutils -- basename, cut, head, sort, tail, tee, et. al.
 #  - fontconfig - Used to validate a fontname (e.g., '--srt-default-font=...)
 #  - grep       - which includes 'egrep' via script or hard-link to grep
 #  - bc         - for (re-)calculating font sizes (floating point math)
@@ -1760,12 +1760,17 @@ build_spell_correction_sed_script() {
 
   local sed_dictionary_file="${sed_dictionary_basename}.${transcript_language}.sed"
 
-  if [ -s "${sed_dictionary_file}" -a -r "${sed_dictionary_file}" ] ; then  # {
+    ###########################################################################
+    # If the sed script "dictionary" is already there, don't touch it ...
+    #
+  if [ -s "${sed_dictionary_file}" ] ; then  # {
+    if ! [ -r "${sed_dictionary_file}" ] ; then  # {
+      printf "${ATTR_ERROR} Can't read '${ATTR_YELLOW}%s${ATTR_OFF}'\n" \
+             "${sed_dictionary_file}" ;
+      abort ${FUNCNAME[0]} ${LINENO};
+    fi  # }
     echo "${sed_dictionary_file}" ;
     return 0 ;
-  else  # }{
-    printf "${ATTR_ERROR} Can't read '${sed_dictionary_file}'"
-    return 1 ; # FIXME abort()
   fi  # }
 
     ###########################################################################
@@ -1778,10 +1783,11 @@ build_spell_correction_sed_script() {
 
     ###########################################################################
     # Handle a few annoying English 'aspell' issues here:
-    # - 'i' is not detected by aspell, but i'd, i'm, i've, etc., are.
-    #   This simple sed tackles all of those because the ' (along with SPACE,
-    #   the start and end of the line) is counted as a word boundary character.
-    #   'i' becomes 'I', 'i've' becomes 'I've', etc.
+    # - 'i' is not detected by aspell as a misspelt word, but i'd, i'm, i've,
+    #   etc., are.
+    #   This one simple sed trick tackles all of those because the ' (along
+    #   with SPACE, and the start / end of the line) is counted as a word
+    #   boundary character.  So, 'i' becomes 'I', 'i've' becomes 'I've', etc.
     #
     if [ "${transcript_language}" = 'English' ] ; then
       printf '%s\n' 's/\<i\>/I/g' > "${sed_dictionary_file}" ;
@@ -1801,7 +1807,6 @@ build_spell_correction_sed_script() {
     # TODO HACK!!! if I see "yui's", I know it's a possessive proper noun,
     #         but I also know "yui" is a proper noun too :)
     #
-    #
     cat "${transcript_file_in}" \
       | aspell list --mode=none --sug-mode=normal \
       | sort -u \
@@ -1809,7 +1814,11 @@ build_spell_correction_sed_script() {
         else cat - ; \
         fi \
       | while read misspelt_word ; do  # {
-       : # best handled in a function, return sed snippet, else '' if can't auto-correct
+        : # best handled in a function, return sed snippet, else '' if can't auto-correct
+        sed_snippet="$(build_sed_snippet "${misspelt_word}", "${transcript_language}")" ;
+        if [ "${sed_snippet}" != '' ] ; then  # {
+          printf '%s\n' "${sed_snippet}" >> "${sed_dictionary_file}" ;
+        fi  # }
       done  # }
 
   return 0 ;
