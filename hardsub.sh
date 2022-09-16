@@ -356,7 +356,7 @@ G_OPTION_SRT_DEFAULT_FONT_NAME='Open Sans'           ; # ANOTHER TEST
 G_OPTION_SRT_DEFAULT_FONT_NAME='Open Sans Semibold'  ; # 4 SubRip subtitles
 G_OPTION_SRT_ITALICS_FONT_NAME="${G_OPTION_SRT_DEFAULT_FONT_NAME}" ;
 
-G_OPTION_TRN_FONT_SIZE=44 ;     # The font size for Transcript subtitles
+G_OPTION_TRN_FONT_SIZE=46 ;     # The font size for Transcript subtitles
 G_OPTION_TRN_DEFAULT_FONT_NAME='Open Sans Semibold'  ; # Font for Transcript subtitles
 G_OPTION_TRN_IS_MUSIC='' ;      # If 'y', then the transcript is music lyrics
 G_OPTION_TRN_MUSIC_CHARS='♩♪♫'; # https://www.alt-codes.net/music_note_alt_codes.php
@@ -1711,7 +1711,13 @@ my_strptime() {
 #      a snippet if the uppercase version passes the aspell test, but bugs ...
 #      The user can use ‘--dry-run’ and edit the sed script in these cases.
 # 3. Uppercase the word.  If it passes aspell, then build the snippet.
-# 4. TODO :: Use the first aspell suggestion, if presented.
+# 4. TODO :: Use the first aspell suggestion, if presented as a CLI option.
+#    TODO :: re-write #2's description.  The only oddity that should happen is
+#            that if a regular noun is NOT in the dictionary, the script will
+#            think it's a possessive proper noun; a regular possessive noun
+#            will not be made uppercase as aspell won't flag it as misspelt.
+#    TODO :: build a list of uncorrectable words so that the user can easily
+#            edit them if needed.  Dunno - can sed have comments in its script?
 #
 build_sed_snippet() {
   misspelt_word="$1" ; shift ;
@@ -1774,7 +1780,7 @@ build_spell_correction_sed_script() {
              "${sed_dictionary_file}" ;
       abort ${FUNCNAME[0]} ${LINENO};
     fi  # }
-    echo "${sed_dictionary_file}" ;
+    printf '%s' "${sed_dictionary_file}" ;
     return 0 ;
   fi  # }
 
@@ -2337,6 +2343,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 HERE_DOC
 
   local number_of_embedded_styles=0 ;
+  local number_of_transcript_files=$# ;
 
   while [ $# -gt 0 ] ; do  # {
     local transcript_file_in="$1" ; shift ;
@@ -2346,8 +2353,12 @@ HERE_DOC
                                          "${transcript_file_in}" \
                                | tail -1                         \
                                | ${CUT} -d' ' -f2)" ;
+    if [ "${transcript_language}" = '' \
+        -a ${number_of_transcript_files} -eq 1 ] ; then  # {
+      transcript_language="${G_OPTION_TRN_LANGUAGE}" ;
+    fi  # }
     local transcript_language_desc="$([ "${transcript_language}" = '' ] \
-            && echo '' || echo "${transcript_language} language ")" ; echo "'${T_LANG_DESC}'" ;
+            && echo '' || echo "${transcript_language} language ")" ;
 
     printf "  ${ATTR_YELLOW_BOLD}FOUND - "
     printf "${ATTR_BLUE_BOLD}%s${ATTR_CLR_BOLD}" "${transcript_language_desc}" ;
@@ -2406,6 +2417,7 @@ HERE_DOC
       # Build the spell-correction sed script here.  We __only__ do this once
       # for the 'G_OPTION_TRN_LANGUAGE' option (default is 'English').
       #
+    local sed_dictionary_file='' ;
     if [ "${G_OPTION_TRN_LANGUAGE}" = "${transcript_language}" ] ; then  # {
       sed_dictionary_file="$(build_spell_correction_sed_script \
                             "${transcript_file_in}"      \
