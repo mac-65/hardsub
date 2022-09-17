@@ -280,9 +280,9 @@ GREP='/usr/bin/grep --text --colour=never' ; # saves the embarrassing "binary fi
 TEE='/usr/bin/tee' ;
 AGREP='/usr/bin/agrep' ;
 AGREP_FUZZY_ITERS=6 ;  # Number of agrep passes to make
-AGREP_FUZZY_ERRORS=2 ; # This value is mostly arbitrary and arrived at by testing.
-                       # This is the number of 'agrep' "failures" we'll count to
-                       # determine if the Title in the video is unusable (garbage)
+AGREP_FUZZY_ERRORS=2 ; # This value is arbitrary and was arrived at by testing.
+                       # This is the number of 'agrep' "failures" we'll count
+                       # to determine if the Title in the video is NOT usable
                        # based on comparing it with the filename of the video.
 SED='/usr/bin/sed' ;
 CUT='/usr/bin/cut' ;
@@ -292,6 +292,7 @@ HEAD='/usr/bin/head' ;
 BC='/usr/bin/bc' ;
 WC='/usr/bin/wc' ;
 STAT='/usr/bin/stat --printf="%s"' ;
+ASPELL='/usr/bin/aspell list --mode=none' ;
 EXIFTOOL='/usr/bin/exiftool' ;
 
   #############################################################################
@@ -381,6 +382,8 @@ G_OPTION_TRN_AMERICAN_ENGLISH=1 ; # ...things like Dr., Mr., and Mrs. and so on
 G_OPTION_TITLE='' ;
 G_OPTION_ARTIST='' ;
 G_OPTION_GENRE='' ;
+
+G_HAVE_TOOL_ASPELL=1 ;          # = 1 if we have a working aspell
 
 G_VIDEO_OUT_DIR='OUT DIR' ;     # the re-encoded video's save location
 C_SUBTITLE_IN_DIR='IN SUBs' ;   # location for manually added subtitles
@@ -1036,9 +1039,20 @@ G_IN_VIDEO_FILE="$1" ; shift ;
 G_IN_EXTENSION="${G_IN_VIDEO_FILE##*.}" ;
 G_IN_BASENAME="$(basename "${G_IN_VIDEO_FILE}" ".${G_IN_EXTENSION}")" ;
 
+# WWWW
+###############################################################################
+# check_installed_tools()
+#
+# Check to ensure we have all of the necessary tools installed, Abort the
+# script if something important is missing, otherwise disable said feature.
+#
+check_installed_tools() {
+}
+
 
 ###############################################################################
-###############################################################################
+# get_video_title()
+#
 # The *way* ffmpeg seems to work (probably documented somewhere) is that if
 # the source metadata tag is __set__, then that metadata is copied to the
 # output file.  I haven't tested to see if there's any filtering done in this
@@ -1192,11 +1206,7 @@ get_video_genre() {
 #         reasons:
 #       - it's very rare to have a missing font in the video file; and
 #       - it's non-trivial to see if the font's filename matches the font
-#         name in the subtitle file.  So, probably not gonna happen ...
-#
-# FIXME :: Theoretically, a video containing an SRT subtitle __could__ have an
-#          attached font.  We'll only use that info to NOT display the warning
-#          about 'no font attachments were found' below.
+#         name in the ASS subtitle file.  So, probably not gonna happen ...
 #
 extract_font_attachments() {
 
@@ -1291,6 +1301,7 @@ extract_font_attachments() {
     echo -n "NOTE${ATTR_OFF}${ATTR_YELLOW}, " ;
     echo    "this video file contains no FONT attachments.${ATTR_OFF}" ;
   fi # }
+
 }
 
 
@@ -1323,6 +1334,8 @@ extract_subtitle_track() {
 
 ###############################################################################
 ###############################################################################
+# apply_script_to_srt_subtitles()
+#
 # SRT subtitles are always converted to ASS subtitles using ffmpeg as it
 # provides quite a bit of versatility.
 # This function provides a way to edit those subtitles, if desired.
@@ -1696,7 +1709,8 @@ my_strptime() {
 # For misspelled words reported by aspell:
 # 1. if the word is already capitalized, treat it as an already correct proper
 #    noun that's NOT in aspell's dictionary.  In this case, we won't build a
-#    sed snippet (we probably won't typically see this case).
+#    sed snippet.  We probably won't see this case except through hand-editing
+#    of the transcript file.
 # 2. if the word ends in ‘'s’, then add it to script as a capitalized word.
 #    aspell will detect “Stephen’s” but not “stephen’s”.  If capitalizing the
 #    word fixes it in aspell, good (e.g. “stephen’s” ⇒ “Stephen’s”).
@@ -1740,7 +1754,7 @@ build_sed_snippet() {
 
     # CASE #3
   misspelt_word_upper="${misspelt_word^}" ;
-  misspelt_word_correct="$(printf "${misspelt_word_upper}" | aspell list --mode=none)" ;
+  misspelt_word_correct="$(printf "${misspelt_word_upper}" | ${ASPELL})" ;
   if [ "${misspelt_word_correct}" = '' ] ; then
     printf 's/\<%s\>/%s/g' "${misspelt_word}" "${misspelt_word_upper}" ;
     return ;
@@ -1842,8 +1856,8 @@ build_spell_correction_sed_script() {
     #    dictionary.  So 'david' will be 's/\<david\>/David/g'.
     #
     cat "${transcript_file_in}" \
-      | aspell list --mode=none \
-      | sort -u \
+      | ${ASPELL}    \
+      | sort -u      \
       | if [ "${transcript_language}" = 'English' ] ; then grep -v "^i'" ; \
         else cat - ; \
         fi \
@@ -1911,8 +1925,9 @@ run_user_sed_script() {
 #  46:55
 #  there it is
 #
-# Maybe if there's less than, say, 6-8 words, do the extra work,
-# otherwise keep the existing line's duration ...?
+# TODO :: Add some logic for to prevent really long line 'End' durations, i.e.
+#         an upper limit for how long the subtitle line is displayed (again
+#         based on the number of words in the subtitle line).
 #
 write_a_subtitle_line() {
   subtitle_file_out="$1" ; shift ;
@@ -2356,6 +2371,7 @@ HERE_DOC
     if [ "${transcript_language}" = '' \
         -a ${number_of_transcript_files} -eq 1 ] ; then  # {
       transcript_language="${G_OPTION_TRN_LANGUAGE}" ;
+      # TODO :: message about selecting default language
     fi  # }
     local transcript_language_desc="$([ "${transcript_language}" = '' ] \
             && echo '' || echo "${transcript_language} language ")" ;
@@ -2417,7 +2433,7 @@ HERE_DOC
       # Build the spell-correction sed script here.  We __only__ do this once
       # for the 'G_OPTION_TRN_LANGUAGE' option (default is 'English').
       #
-    local sed_dictionary_file='' ;
+    local sed_dictionary_file='' ; # WWWW
     if [ "${G_OPTION_TRN_LANGUAGE}" = "${transcript_language}" ] ; then  # {
       sed_dictionary_file="$(build_spell_correction_sed_script \
                             "${transcript_file_in}"      \
@@ -2467,11 +2483,11 @@ echo -n "${ATTR_BLUE_BOLD}<< " ;
 echo -n "'${ATTR_GREEN_BOLD}${G_IN_VIDEO_FILE}${ATTR_OFF}${ATTR_BLUE_BOLD}'"
 echo    " >>${ATTR_OFF} ..." ;
 
-if [ -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ] ; then
-  echo -n "  $(tput setaf 3 ; tput bold)COMPLETED$(tput sgr0; tput bold) "
-  echo    "'${G_IN_VIDEO_FILE}'$(tput sgr0) ..." ;
-  exit 0;
-fi
+
+  #############################################################################
+  # Check to ensure we have all of the necessary tools installed
+  #
+check_installed_tools ;
 
 
   #############################################################################
@@ -2886,8 +2902,8 @@ HERE_DOC
 else  # }{
 
   run_desc="  $([ "${G_OPTION_DRY_RUN}" = '' ] \
-            && echo "${ATTR_BLUE_BOLD}"       \
-            || echo "${ATTR_YELLOW_BOLD}DRY RUN ")COMPLETE" ;
+            && echo "${ATTR_YELLOW_BOLD}"       \
+            || echo "${ATTR_MAGENTA_BOLD}DRY RUN ")COMPLETE" ;
   printf "${run_desc}${ATTR_CLR_BOLD} '%s' ...\n" "${G_IN_VIDEO_FILE}" ;
   tput sgr0 ;
   RC=0 ;
