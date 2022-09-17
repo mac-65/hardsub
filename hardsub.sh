@@ -47,10 +47,6 @@ fi
 
 ###############################################################################
 # NOTE + TODO:
-# - https://stackoverflow.com/questions/592620/how-can-i-check-if-a-program-exists-from-a-bash-script
-#    command -v foo >/dev/null 2>&1 || { echo >&2 "I require foo but it's not installed.  Aborting."; exit 1; }
-#    type foo >/dev/null 2>&1 || { echo >&2 "I require foo but it's not installed.  Aborting."; exit 1; }
-#    hash foo 2>/dev/null || { echo >&2 "I require foo but it's not installed.  Aborting."; exit 1; }
 # - Is this what's happening to the older videos?
 #   https://forum.videohelp.com/threads/397242-FFMPEG-Interlaced-MPEG2-video-to-x264-Issue
 #
@@ -232,17 +228,17 @@ trap 'exit_handler' EXIT ;
 
 ###############################################################################
 # Required tools (many of these are probably installed by default):
-#  - ffmpeg
-#  - mkvtoolnix
-#  - sed + pcre2 (the library)
-#  - coreutils -- basename, cut, head, sort, tail, tee, et. al.
-#  - fontconfig - Used to validate a fontname (e.g., '--srt-default-font=...)
-#  - grep       - which includes 'egrep' via script or hard-link to grep
-#  - bc         - for (re-)calculating font sizes (floating point math)
-#  - jq         - used to parse mkvmerge's json output
+# - ffmpeg
+# - mkvtoolnix
+# - sed + pcre2 (the library)
+# - coreutils   - basename, cut, head, sort, tail, tee, et. al.
+# - fontconfig  - used to validate a fontname (e.g., '--srt-default-font=...)
+# - grep        - includes 'egrep' via script or hard-link to grep
+# - bc          - for (re-)calculating font sizes (floating point math)
+# - jq          - used to parse mkvmerge's json output
 #                 developed and tested with version 1.6
-#  - dos2unix   - ffmpeg builds a DOS file when converting SRT to ASS subtitles
-#  - bash shell - unless you're going with a really old distro, the version of
+# - dos2unix    - ffmpeg builds a DOS file when converting SRT to ASS subtitles
+# - bash + type - unless you're going with a really old distro, the version of
 #                 bash installed is probably modern enough for this script.
 #
 #                 The script does use the [[ ]] construct, so this script is
@@ -251,16 +247,16 @@ trap 'exit_handler' EXIT ;
 #                 and bash exists for even legacy Solaris 8 systems (I used to
 #                 run bash on my SunOS 4.1.3_u1 SPARC system back in the day).
 #                 This script used bash-5.1.0 in its development.
-#  - exiftool   - used in this script to get/copy metadata from the source
+# - exiftool    - used in this script to get/copy metadata from the source
 #                 video to the re-encoded video.
 #                 exiftool is a perl script, so (obviously) perl needs to be
 #                 installed along with any additional supporting libraries.
-#  - agrep + libtre
+# - agrep + libtre
 #               - https://github.com/Wikinaut/agrep
 #                 Recent Fedora distros have an 'agrep' package which links
 #                 with 'libtre' and can be optionally installed; other distros
 #                 may require building from source.
-#  - aspell     - used to build auto correct scripts for transcript files
+# - aspell      - used to build auto correct scripts for transcript files
 #
 C_SCRIPT_NAME="`basename \"$0\"`" ;
 DBG='' ;
@@ -359,6 +355,7 @@ G_OPTION_SRT_ITALICS_FONT_NAME="${G_OPTION_SRT_DEFAULT_FONT_NAME}" ;
 
 G_OPTION_TRN_FONT_SIZE=46 ;     # The font size for Transcript subtitles
 G_OPTION_TRN_DEFAULT_FONT_NAME='Open Sans Semibold'  ; # Font for Transcript subtitles
+# TODO FIXME 'Open Sans Semibold' does not exist on blackshed, should print a warning
 G_OPTION_TRN_IS_MUSIC='' ;      # If 'y', then the transcript is music lyrics
 G_OPTION_TRN_MUSIC_CHARS='♩♪♫'; # https://www.alt-codes.net/music_note_alt_codes.php
                                 # HI :: If the user specifies '--trn-is-music',
@@ -383,7 +380,7 @@ G_OPTION_TITLE='' ;
 G_OPTION_ARTIST='' ;
 G_OPTION_GENRE='' ;
 
-G_HAVE_TOOL_ASPELL=1 ;          # = 1 if we have a working aspell
+export G_HAVE_TOOL_ASPELL=1 ;   # = 1 if we have a working aspell
 
 G_VIDEO_OUT_DIR='OUT DIR' ;     # the re-encoded video's save location
 C_SUBTITLE_IN_DIR='IN SUBs' ;   # location for manually added subtitles
@@ -1039,7 +1036,7 @@ G_IN_VIDEO_FILE="$1" ; shift ;
 G_IN_EXTENSION="${G_IN_VIDEO_FILE##*.}" ;
 G_IN_BASENAME="$(basename "${G_IN_VIDEO_FILE}" ".${G_IN_EXTENSION}")" ;
 
-# WWWW
+
 ###############################################################################
 # check_installed_tools()
 #
@@ -1047,14 +1044,40 @@ G_IN_BASENAME="$(basename "${G_IN_VIDEO_FILE}" ".${G_IN_EXTENSION}")" ;
 # script if something important is missing, otherwise disable said feature.
 #
 check_installed_tools() {
+
+    ###########################################################################
+    # ASPELL
+    #
+  local cmd_base="$(printf '%s' "${ASPELL}" | cut -d' ' -f1)" ;
+  MSG="$(type "${cmd_base}" 2>&1)" ; RC=$? ;
+  if [ ${RC} -eq 0 ] ; then  # {
+
+    MSG="$(printf '%s' "${G_OPTION_TRN_LANGUAGE}" | ${ASPELL} 2>&1)" ;
+
+    if [ "${MSG}" = "${G_OPTION_TRN_LANGUAGE}" ] ; then  # {
+      MSG="${ATTR_CLR_BOLD}The word ${ATTR_MAGENTA_BOLD}'${G_OPTION_TRN_LANGUAGE}'${ATTR_CLR_BOLD} was NOT found by '${cmd_base}'."
+      printf "  ${ATTR_NOTE} ${ATTR_CLR_BOLD}%s\n" "${MSG}" ;
+      printf "         ${ATTR_YELLOW}%s\n" \
+             "Spell and auto correction may NOT work as expected." ;
+    fi  # }
+  else  # }{
+    printf "  ${ATTR_NOTE} ${ATTR_CLR_BOLD}%s\n" "${MSG}" ;
+    printf "         ${ATTR_RED_BOLD}%s\n" \
+           "Spell and auto correction of the transcript will be disabled." ;
+    G_HAVE_TOOL_ASPELL=0 ;
+  fi  # }
+
+  { set +x ; } >/dev/null 2>&1
+  tput sgr0 ;
+# WWWW
 }
 
 
 ###############################################################################
 # get_video_title()
 #
-# The *way* ffmpeg seems to work (probably documented somewhere) is that if
-# the source metadata tag is __set__, then that metadata is copied to the
+# The *way* ffmpeg seems to work (probably documented somewhere) is that if a
+# metadata tag is __set__ in the source, then that metadata is copied to the
 # output file.  I haven't tested to see if there's any filtering done in this
 # process (e.g. coping a video specific tag to an audio only output file), but
 # since this script doesn't do those types of conversions, I'll skip it 4 now.
@@ -2433,8 +2456,9 @@ HERE_DOC
       # Build the spell-correction sed script here.  We __only__ do this once
       # for the 'G_OPTION_TRN_LANGUAGE' option (default is 'English').
       #
-    local sed_dictionary_file='' ; # WWWW
-    if [ "${G_OPTION_TRN_LANGUAGE}" = "${transcript_language}" ] ; then  # {
+    local sed_dictionary_file='' ; # Spell correction is disabled if NOT set.
+    if [ ${G_HAVE_TOOL_ASPELL} -eq 1 \
+        -a "${G_OPTION_TRN_LANGUAGE}" = "${transcript_language}" ] ; then  # {
       sed_dictionary_file="$(build_spell_correction_sed_script \
                             "${transcript_file_in}"      \
                             "${transcript_language}"     \
@@ -2487,7 +2511,7 @@ echo    " >>${ATTR_OFF} ..." ;
   #############################################################################
   # Check to ensure we have all of the necessary tools installed
   #
-check_installed_tools ;
+check_installed_tools ; # REMOVE THIS LATER ...
 
 
   #############################################################################
@@ -2847,6 +2871,11 @@ fi
 #
 if [ ! -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" \
        -a "${G_OPTION_DRY_RUN}" = '' ] ; then  # {
+
+    ###########################################################################
+    # Check to ensure we have all of the necessary tools installed ...
+    #
+  check_installed_tools ;
 
   RC=0 ;
   if   [ "${G_OPTION_NO_COMMENT}" = 'y' ] \
