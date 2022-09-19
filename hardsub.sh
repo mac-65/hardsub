@@ -167,7 +167,7 @@ export ATTR_NOTE="${ATTR_OFF}`tput setaf 11`NOTE -${ATTR_OFF}";
 export ATTR_TODO="${ATTR_OFF}`tput setaf 11; tput blink`TODO -${ATTR_OFF}";
 export ATTR_TOOL="${ATTR_GREEN_BOLD}" ;
 
-HS1_CHARACTERS='‘’∕“”…' ;
+HS1_CHARACTERS_QUOTES='‘’∕“”…' ;
 
 export G_SED_FILE='' ;
 export G_TRN_FILE='' ; # Unused for now ...
@@ -877,6 +877,8 @@ fi
 
 initialize_variables ;
 
+G_OPTION_MESSAGES='' ;
+
 eval set -- "${HS_OPTIONS}" ;
 while true ; do  # {
   SEP=' ' ;
@@ -893,10 +895,16 @@ while true ; do  # {
     ;;
 # --mux-subs)   # If there are subtitles, then also MUX them into the video
 #   ;;
-  --dry-run)
+  -d|--dry-run)
+    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+        printf "  ${ATTR_YELLOW_BOLD}DRY RUN - ${ATTR_OFF}%s\\\n" \
+               'ffmpeg will NOT be run after the video’s preprocessing')" ;
     G_OPTION_DRY_RUN='y' ; shift ;
     ;;
   --debug)
+    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+        printf "  ${ATTR_YELLOW_BOLD}DEBUG RUN - ${ATTR_OFF}%s\\\n" \
+               'ffmpeg will run with very fast, low quality settings')" ;
     G_OPTION_DEBUG='y' ; shift ;
     ;;
   --no-metadata)
@@ -1058,7 +1066,7 @@ check_installed_tools() {
       MSG="${ATTR_CLR_BOLD}The word ${ATTR_MAGENTA_BOLD}'${G_OPTION_TRN_LANGUAGE}'${ATTR_CLR_BOLD} was NOT found by '${cmd_base}'."
       printf "  ${ATTR_NOTE} ${ATTR_CLR_BOLD}%s\n" "${MSG}" ;
       printf "         ${ATTR_YELLOW}%s\n" \
-             "Spell and auto correction may NOT work as expected." ;
+             "Spell and auto correction of the transcript may NOT work as expected." ;
     fi  # }
   else  # }{
     printf "  ${ATTR_NOTE} ${ATTR_CLR_BOLD}%s\n" "${MSG}" ;
@@ -1691,6 +1699,10 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
 # Working with time in shell script is a B***h at best.
 # I think this solution is okay.
 #
+# Weird behavior -- date -d "(( skipped_lines++ ))" '+%s' is a VALID DATE, but
+#                   date -d "(( skipped_lines++ )) ;" '+%s' is NOT!?
+# I found this using this script as a transcript file to see what would break.
+#
 # Returns:
 #  0 - is a valid timestamp, the seconds is returned as a string.
 #  1 - not a timestamp, s/b the script
@@ -1715,13 +1727,17 @@ my_strptime() {
     #
   echo "${in_line}" | ${GREP} -q '^[0-9]\{1,2\}:[0-5][0-9]$' ; RC=$? ;
   if [ ${RC} -eq 0 ] ; then  # {
-    ts_pad='00:' ; # It's the '00:00' pattern, so add the hours padding ...
+    ts_pad='00:' ; # It IS the '00:00' pattern, so add the hours prefix ...
+  else  # }{
+    echo "${in_line}" | ${GREP} -q '^[0-9]:[0-5][0-9]:[0-5][0-9]$' ; RC=$? ;
+    [ ${RC} -ne 0 ] && { printf '' ; return ${RC} ; } ; # bail at this point
   fi  # }
 
   ts_seconds="$(${DATE} -d "${ts_pad}${in_line}" '+%s' 2>/dev/null)" ; RC=$? ;
 
   echo "${ts_seconds}" ;
-  return $RC;
+
+  return ${RC} ;
 }
 
 
@@ -1834,9 +1850,9 @@ build_spell_correction_sed_script() {
     ###########################################################################
     # Handle a few annoying English 'aspell' issues here:
     # - 'i' is not detected by aspell as a misspelt word, but i'd, i'm, i've,
-    #   etc., are.
-    #   This one simple sed trick tackles all of those because the ' (along
-    #   with SPACE, and the start / end of the line) is counted as a word
+    #   etc., are detected correctly.
+    #   This one simple trick tackles all of those case because the ' (along
+    #   with SPACE, the start / end of the line) are each counted as a word
     #   boundary character.  So, 'i' becomes 'I', 'i've' becomes 'I've', etc.
     #
     if [ "${transcript_language}" = 'English' ] ; then  # {
@@ -2055,6 +2071,8 @@ write_a_subtitle_line() {
 #
 add_transcript_text_to_subtitle() {
 
+  local read_option="$([ "${G_OPTION_DEBUG}" = 'y' ] && printf '%s' '-r')" ;
+
   local transcript_file_in="$1" ; shift ;
   local transcript_language="$1" ; shift ;
   local transcript_style="$1" ; shift ;
@@ -2088,27 +2106,50 @@ add_transcript_text_to_subtitle() {
     ###########################################################################
     # Walk through the transcript file:
     # - keep track of the line number in case there's an error with the line;
-    # - grep to remove any "magic" lines (#S, #H, etc.);
-    # - sed to trim the line of leading / trailing SPACEs; and
-    # - skip any EMPTY lines (these are identified by adjacent timestamps).
-    # - allow pass-thru comments beginning with '##', i.e. these will be
-    #   treated as subtitle text (as long as their preceded by a timestamp).
+    # - sed to remove any "magic" lines (#S, #L, #H, etc.);
     #   > a clever trick (discovered by accident) -->
     #     sed 's/^#[^#]*//' without the end anchor ('$') produces identical
     #     results to sed -e 's/^#[^#]*$//' -e 's/^##/#/'.
+    # - sed to trim the line of leading / trailing SPACEs; and
+    # - skip any EMPTY lines (these are identified by adjacent timestamps).
+    # - allow pass-thru comments beginning with '##', i.e. these will be
+    #   treated as subtitle text (as long as they're preceded by a timestamp).
     #
+    # A “feature” of read in which a backslash-newline pair, aka "line
+    # continuation," that effectively joins the next line with the current
+    # line, is supported.  This is really a side effect of how this script was
+    # written and there is no special logic is here to support that feature.
+    # So, a transcript like -->
+    #   0:28
+    #   when the japs bombed pearl harbor they upset our thinking \
+    #   about a great many things including alaska
+    # will be parsed and seen as -->
+    #   0:28
+    #   when the japs bombed pearl harbor they upset our thinking about a great many things including alaska
+    # which is a single text line.
+    #
+    # The downside is that line counts will be skewed so identifying errors
+    # by line number may be obfuscated.  Using '--debug' disables this in read,
+    # which may help with transcript debugging.
+    #
+  local start_of_transcript_lineno=0 ;
+
   cat "${transcript_file_in}"                 \
     | ${SED} -e 's/^#[^#]*//'                 \
              -e 's/^exit[[:space:]]*[0]*.*//' \
              -e 's/^[[:space:]]*//'           \
              -e 's/[[:space:]]*$//'           \
-    | while read current_line ; do  # {
+    | while read ${read_option} current_line ; do  # {
 
       (( transcript_lineno++ )) ;
 
+      if [ "${G_OPTION_DEBUG}" = 'y' ] ; then  # {
+        printf '%s\n' "${current_line}" >> "${transcript_file_in%.txt}.raw.txt" ;
+      fi  # }
+
       if [ ${my_state} -eq 0 ] ; then  # { FIXME - this logic is NOT quite right ??
         if [ "${current_line}" = '' ] ; then  # {
-          (( skipped_lines++ ))
+          (( skipped_lines++ )) ;
           continue ;
         fi  # }
       else  # }{
@@ -2118,6 +2159,13 @@ add_transcript_text_to_subtitle() {
        current_start_time="$(my_strptime ${my_state} "${current_line}")" ; RC=$? ;
 
        if [ ${RC} -eq 0 ] ; then  # { FOUND A TIMESTAMP LINE!
+         if [ "${G_OPTION_DEBUG}" = 'y' \
+            -a ${start_of_transcript_lineno} -eq 0 ] ; then  # {
+           start_of_transcript_lineno=${transcript_lineno} ;
+           printf '  NOTE :: transcript starts at line %d "%s" = "%s"\n' \
+                  ${transcript_lineno} "${current_line}" "${current_start_time}" ;
+         fi  # }
+
          if [ ${my_state} -ne 0 ] ; then  # { DEBUG: s/b '-ne 0'
 
              ##################################################################
@@ -2503,15 +2551,21 @@ HERE_DOC
 ###############################################################################
 # main();
 #
-echo -n "${ATTR_BLUE_BOLD}<< " ;
-echo -n "'${ATTR_GREEN_BOLD}${G_IN_VIDEO_FILE}${ATTR_OFF}${ATTR_BLUE_BOLD}'"
-echo    " >>${ATTR_OFF} ..." ;
+if ! [ -s "${G_IN_VIDEO_FILE}" ] ; then
+# printf "${ATTR_BLUE_BOLD}<< '" ;
+# printf "${ATTR_GREEN_BOLD}%s" "${G_IN_VIDEO_FILE}"
+# printf "${ATTR_BLUE_BOLD}' >>${ATTR_OFF} ...\n" ;
+  printf "${ATTR_ERROR} ${ATTR_BOLD}‘${ATTR_YELLOW_BOLD}%s${ATTR_CLR_BOLD}’\n" \
+         "${G_IN_VIDEO_FILE}" ;
+  printf "        ${ATTR_YELLOW_BOLD}Is not there or is an EMPTY file.${ATTR_OFF}\n"
+  exit 3 ;
+fi
 
+printf "${ATTR_BLUE_BOLD}<< '" ;
+printf "${ATTR_GREEN_BOLD}%s" "${G_IN_VIDEO_FILE}"
+printf "${ATTR_BLUE_BOLD}' >>${ATTR_OFF} ...\n" ;
 
-  #############################################################################
-  # Check to ensure we have all of the necessary tools installed
-  #
-check_installed_tools ; # REMOVE THIS LATER ...
+echo -ne "${G_OPTION_MESSAGES}" ; # <sic>, couldn't printf this 'cause of '\n's
 
 
   #############################################################################
@@ -2523,6 +2577,8 @@ if [ "${G_OPTION_DEBUG}" = '' ] ; then
 else
   C_FFMPEG_PRESET="${C_FFMPEG_PRESET_DBG}" ;
   C_FFMPEG_CRF="${C_FFMPEG_CRF_DBG}" ;
+
+  check_installed_tools ; # Ensure we have all of the needed tools installed
 fi
 
 
@@ -2585,7 +2641,8 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
       G_TRN_SED_SCRIPT='' ;
     fi  # }
 
-    { set +x ; tput sgr0 ; } >/dev/null 2>&1
+    { set +x ; } >/dev/null 2>&1
+    tput sgr0 ;
 
     C_SED_DICTIONARY_BASENAME="${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}" ;
     convert_transcripts_to_ass "${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" \
