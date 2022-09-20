@@ -46,6 +46,25 @@ done ;
 fi
 
 ###############################################################################
+###############################################################################
+# Copyright (C) 2022
+# License: GPL v2
+#
+# This file is part of pngass.sh
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+###############################################################################
+###############################################################################
+
+
+###############################################################################
 # NOTE + TODO:
 # - Is this what's happening to the older videos?
 #   https://forum.videohelp.com/threads/397242-FFMPEG-Interlaced-MPEG2-video-to-x264-Issue
@@ -952,7 +971,7 @@ while true ; do  # {
     echo -n "${ATTR_YELLOW_BOLD}  SETTING SubRip font size ${ATTR_CLR_BOLD}" ;
     echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_SRT_FONT_SIZE}" ;
     echo    "${ATTR_CLR_BOLD} ($2%).${ATTR_OFF}" ;
-      # TODO :: add a note about this to the comments IF the video really had SubRip subtitles
+      # TODO :: add a note about this to the comments IF the video really has SubRip subtitles
     shift 2;
     ;;
   --trn-font-size-percent)
@@ -961,7 +980,7 @@ while true ; do  # {
     echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's font size ${ATTR_CLR_BOLD}" ;
     echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_FONT_SIZE}" ;
     echo    "${ATTR_CLR_BOLD} ($2%).${ATTR_OFF}" ;
-      # TODO :: add a note about this to the comments IF the video really a transcript
+      # TODO :: add a note about this to the comments IF the video really has a transcript
     shift 2;
     ;;
   --trn-word-time-ms)
