@@ -1987,6 +1987,14 @@ run_user_sed_script() {
 #         an upper limit for how long the subtitle line is displayed (again
 #         based on the number of words in the subtitle line).
 #
+#  18:54 <<=== speaker is done the line at 19:00ish, 19 words in 6 seconds,
+#              the gap to the next line is 16 seconds; about 316ms / word.
+#  now freighters coming up the inside passage from prince rupert in british \
+#    columbia could be unloaded quickly and easily
+#  19:10 <<=== speaker is done the line at 19:13ish, 9 words in 3 seconds,
+#              the gap to the next line is 16 seconds; about 300ms / word.
+#  barges could be beached and unloaded at low tide
+#
 write_a_subtitle_line() {
   subtitle_file_out="$1" ; shift ;
   transcript_sed_script="$1" ; shift ;
