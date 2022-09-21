@@ -372,8 +372,10 @@ G_OPTION_SRT_DEFAULT_FONT_NAME='Open Sans'           ; # ANOTHER TEST
 G_OPTION_SRT_DEFAULT_FONT_NAME='Open Sans Semibold'  ; # 4 SubRip subtitles
 G_OPTION_SRT_ITALICS_FONT_NAME="${G_OPTION_SRT_DEFAULT_FONT_NAME}" ;
 
-G_OPTION_TRN_FONT_SIZE=46 ;     # The font size for Transcript subtitles
 G_OPTION_TRN_DEFAULT_FONT_NAME='Open Sans Semibold'  ; # Font for Transcript subtitles
+G_OPTION_TRN_FONT_SIZE=46 ;     # The font size for Transcript subtitles
+G_OPTION_TRN_FONT_TBGR='6000F8FF' ; # The font color spec for Transcript subtitles
+G_OPTION_TRN_MARGIN=100 ;       # The default left and right text margin
 # TODO FIXME 'Open Sans Semibold' does not exist on blackshed, should print a warning
 G_OPTION_TRN_IS_MUSIC='' ;      # If 'y', then the transcript is music lyrics
 G_OPTION_TRN_MUSIC_CHARS='♩♪♫'; # https://www.alt-codes.net/music_note_alt_codes.php
@@ -747,6 +749,16 @@ apply_percentage() {
 
 
 ###############################################################################
+# get_color_spec  option  value  olde_value
+#
+get_color_spec() {
+
+  echo '  IN get_color_spec()' ;
+#   G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(get_color_spec "$1" "$2" "${olde_value}")" ;
+}
+
+
+###############################################################################
 # get_option_integer  option  value  minimum  [maximum]
 #
 get_option_integer() {
@@ -880,6 +892,8 @@ preset::,\
 out-dir::,\
 trn-word-time-ms::,\
 trn-is-music,\
+trn-text-margin::,\
+trn-font-tbgr::,\
 trn-font-size-percent::,\
 trn-words-threshold::,\
 trn-language::,\
@@ -897,6 +911,7 @@ fi
 initialize_variables ;
 
 G_OPTION_MESSAGES='' ;
+G_OPTION_GLOBAL_MESSAGES='' ; # Show these messages last on the console
 
 eval set -- "${HS_OPTIONS}" ;
 while true ; do  # {
@@ -915,13 +930,13 @@ while true ; do  # {
 # --mux-subs)   # If there are subtitles, then also MUX them into the video
 #   ;;
   -d|--dry-run)
-    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+    G_OPTION_GLOBAL_MESSAGES="${G_OPTION_GLOBAL_MESSAGES}$(\
         printf "  ${ATTR_YELLOW_BOLD}DRY RUN - ${ATTR_OFF}%s\\\n" \
                'ffmpeg will NOT be run after the video’s preprocessing')" ;
     G_OPTION_DRY_RUN='y' ; shift ;
     ;;
   --debug)
-    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+    G_OPTION_GLOBAL_MESSAGES="${G_OPTION_GLOBAL_MESSAGES}$(\
         printf "  ${ATTR_YELLOW_BOLD}DEBUG RUN - ${ATTR_OFF}%s\\\n" \
                'ffmpeg will run with very fast, low quality settings')" ;
     G_OPTION_DEBUG='y' ; shift ;
@@ -974,40 +989,64 @@ while true ; do  # {
       # TODO :: add a note about this to the comments IF the video really has SubRip subtitles
     shift 2;
     ;;
+  --trn-text-margin)
+    olde_value="${G_OPTION_TRN_MARGIN}" ;
+    G_OPTION_TRN_MARGIN="$(get_option_integer "$1" "$2" 25 200)" ;
+    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+        echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's left and right margin ${ATTR_CLR_BOLD}" ;
+        echo -n "(from ${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_MARGIN}" ;
+        printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
+    shift 2;
+    ;;
+  --trn-font-tbgr)
+#-- G_OPTION_TRN_FONT_TBGR=
+    olde_value="${G_OPTION_TRN_FONT_TBGR}" ;
+#-- G_OPTION_TRN_FONT_TBGR="$(get_color_spec "$1" "$2" "${olde_value}")" ;
+    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(get_color_spec "$1" "$2" "${olde_value}")\n" ;
+    G_OPTION_TRN_FONT_TBGR="$2" ;
+    shift 2;
+    ;;
   --trn-font-size-percent)
     olde_value="${G_OPTION_TRN_FONT_SIZE}" ;
-    G_OPTION_TRN_FONT_SIZE="$(apply_percentage "$1" "$2" "${G_OPTION_TRN_FONT_SIZE}" 1)" ;
-    echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's font size ${ATTR_CLR_BOLD}" ;
-    echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_FONT_SIZE}" ;
-    echo    "${ATTR_CLR_BOLD} ($2%).${ATTR_OFF}" ;
+    G_OPTION_TRN_FONT_SIZE="$(apply_percentage "$1" "$2" "${olde_value}" 1)" ;
+    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+        echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's font size ${ATTR_CLR_BOLD}" ;
+        echo -n "(from ${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_FONT_SIZE}" ;
+        printf    "${ATTR_CLR_BOLD} ($2%%).${ATTR_OFF}\\\n")" ;
       # TODO :: add a note about this to the comments IF the video really has a transcript
     shift 2;
     ;;
   --trn-word-time-ms)
     olde_value="${G_OPTION_TRN_WORD_TIME}" ;
     G_OPTION_TRN_WORD_TIME="$(get_option_integer "$1" "$2" ${G_TRN_WORD_TIME_MIN})" ;
-    echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's word time ${ATTR_CLR_BOLD}" ;
-    echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_WORD_TIME}" ;
-    echo    "${ATTR_CLR_BOLD}.${ATTR_OFF}" ;
+    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+        echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's word time ${ATTR_CLR_BOLD}" ;
+        echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_WORD_TIME}" ;
+        printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
     shift 2;
     ;;
   --trn-words-threshold)
     olde_value="${G_OPTION_TRN_WC_THRESHOLD}" ;
     G_OPTION_TRN_WC_THRESHOLD="$(get_option_integer "$1" "$2" 2 40)" ;
-    echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's word count threshold "
-    echo -n "for End time recalculation${ATTR_CLR_BOLD} " ;
-    echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_WC_THRESHOLD}" ;
-    echo    "${ATTR_CLR_BOLD} words.${ATTR_OFF}" ;
+    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+        echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's word count threshold "
+        echo -n "for End time recalculation${ATTR_CLR_BOLD} " ;
+        echo -n "(${olde_value})${ATTR_OFF} to " ;
+        printf "${ATTR_GREEN_BOLD}%d${ATTR_CLR_BOLD} words.${ATTR_OFF}\\\n"\
+               "${G_OPTION_TRN_WC_THRESHOLD}")" ;
     shift 2;
     ;;
   --trn-language)
     G_OPTION_TRN_LANGUAGE="$(get_option_string "$1" "$2")" ;
-    printf "${ATTR_YELLOW_BOLD}  SETTING transcript's spell check language to " ;
-    printf "${ATTR_CLR_BOLD}'${ATTR_GREEN_BOLD}${G_OPTION_TRN_LANGUAGE}${ATTR_CLR_BOLD}'." ;
-    printf '\n' ;
+    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+        printf "${ATTR_YELLOW_BOLD}  SETTING transcript's spell check language to " ;
+        printf "${ATTR_CLR_BOLD}'${ATTR_GREEN_BOLD}%s${ATTR_CLR_BOLD}'.\\\n" \
+               "${G_OPTION_TRN_LANGUAGE}")" ;
     shift 2;
     ;;
   --trn-disable-sed)
+    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+        printf "${ATTR_YELLOW_BOLD}  DISABLING transcript's sed scripts.${ATTR_OFF}\\\n")" ;
     G_OPTION_TRN_SED_SCRIPT_DISABLE=1 ; shift ;
     ;;
   --preset)
@@ -1746,10 +1785,14 @@ my_strptime() {
     #
   echo "${in_line}" | ${GREP} -q '^[0-9]\{1,2\}:[0-5][0-9]$' ; RC=$? ;
   if [ ${RC} -eq 0 ] ; then  # {
+
     ts_pad='00:' ; # It IS the '00:00' pattern, so add the hours prefix ...
+
   else  # }{
+
     echo "${in_line}" | ${GREP} -q '^[0-9]:[0-5][0-9]:[0-5][0-9]$' ; RC=$? ;
     [ ${RC} -ne 0 ] && { printf '' ; return ${RC} ; } ; # bail at this point
+
   fi  # }
 
   ts_seconds="$(${DATE} -d "${ts_pad}${in_line}" '+%s' 2>/dev/null)" ; RC=$? ;
@@ -1828,7 +1871,7 @@ build_sed_snippet() {
 #   transcript_file_in,
 #   transcript_language,
 #   sed_dictionary_basename)
-# RETURNS :: sed_dictionary_file
+# RETURNS :: dictionary_sed_script
 #
 # So, the theory is that when a transcript is auto-generated, all of the words
 # are correctly spelled, but without case distinction.  Some content creators
@@ -1841,28 +1884,28 @@ build_spell_correction_sed_script() {
   local transcript_language="$1" ; shift ;
   local sed_dictionary_basename="$1" ; shift ;
 
-  local sed_dictionary_file="${sed_dictionary_basename}.${transcript_language}.sed"
+  local dictionary_sed_script="${sed_dictionary_basename}.${transcript_language}.sed"
 
     ###########################################################################
     # If the sed script "dictionary" is already there, don't touch it ...
     #
-  if [ -s "${sed_dictionary_file}" ] ; then  # {
-    if ! [ -r "${sed_dictionary_file}" ] ; then  # {
+  if [ -s "${dictionary_sed_script}" ] ; then  # {
+    if ! [ -r "${dictionary_sed_script}" ] ; then  # {
       printf "${ATTR_ERROR} Can't read '${ATTR_YELLOW}%s${ATTR_OFF}'\n" \
-             "${sed_dictionary_file}" ;
+             "${dictionary_sed_script}" ;
       abort ${FUNCNAME[0]} ${LINENO};
     fi  # }
-    printf '%s' "${sed_dictionary_file}" ;
+    printf '%s' "${dictionary_sed_script}" ;
     return 0 ;
   fi  # }
 
     ###########################################################################
     # 'touch' is good enough as we don't need an atomic operation for this ...
     #
-  touch "${sed_dictionary_file}" ; RC=$? ;
-  if ! [ ${RC} -eq 0 -a -w "${sed_dictionary_file}" ] ; then
+  touch "${dictionary_sed_script}" ; RC=$? ;
+  if ! [ ${RC} -eq 0 -a -w "${dictionary_sed_script}" ] ; then
     printf "${ATTR_ERROR} Can't create '${ATTR_YELLOW}%s${ATTR_OFF}'\n" \
-           "${sed_dictionary_file}" ;
+           "${dictionary_sed_script}" ;
     abort ${FUNCNAME[0]} ${LINENO};
   fi
 
@@ -1875,13 +1918,13 @@ build_spell_correction_sed_script() {
     #   boundary character.  So, 'i' becomes 'I', 'i've' becomes 'I've', etc.
     #
     if [ "${transcript_language}" = 'English' ] ; then  # {
-      printf '%s\n' 's/\<i\>/I/g' > "${sed_dictionary_file}" ;
-      printf '%s\n' 's/\<michaelena\>/Michaelena/g' >> "${sed_dictionary_file}" ;
+      printf '%s\n' 's/\<i\>/I/g' > "${dictionary_sed_script}" ;
+      printf '%s\n' 's/\<michaelena\>/Michaelena/g' >> "${dictionary_sed_script}" ;
 
       if [ ${G_OPTION_TRN_AMERICAN_ENGLISH} -eq 1 ] ; then  # {
-        printf '%s\n' 's/\<dr\>/Dr./g' >> "${sed_dictionary_file}" ;
-        printf '%s\n' 's/\<mr\>/Mr./g' >> "${sed_dictionary_file}" ;
-        printf '%s\n' 's/\<mrs\>/Mrs./g' >> "${sed_dictionary_file}" ;
+        printf '%s\n' 's/\<dr\>/Dr./g' >> "${dictionary_sed_script}" ;
+        printf '%s\n' 's/\<mr\>/Mr./g' >> "${dictionary_sed_script}" ;
+        printf '%s\n' 's/\<mrs\>/Mrs./g' >> "${dictionary_sed_script}" ;
       fi  # }
 
         #######################################################################
@@ -1891,15 +1934,15 @@ build_spell_correction_sed_script() {
         # Anything beyond these U.S. states could be added to the general-
         # purpose sed script (cities, etc.)
         #
-      printf '%s\n' 's/\<new hampshire\>/New Hampshire/g' >> "${sed_dictionary_file}" ;
-      printf '%s\n' 's/\<new jersey\>/New Jersey/g' >> "${sed_dictionary_file}" ;
-      printf '%s\n' 's/\<new mexico\>/New Mexico/g' >> "${sed_dictionary_file}" ;
-      printf '%s\n' 's/\<new york\>/New York/g' >> "${sed_dictionary_file}" ;
-      printf '%s\n' 's/\<north carolina\>/North Carolina/g' >> "${sed_dictionary_file}" ;
-      printf '%s\n' 's/\<north dakota\>/North Dakota/g' >> "${sed_dictionary_file}" ;
-      printf '%s\n' 's/\<rhode island\>/Rhode Island/g' >> "${sed_dictionary_file}" ;
-      printf '%s\n' 's/\<south carolina\>/South Carolina/g' >> "${sed_dictionary_file}" ;
-      printf '%s\n' 's/\<south dakota\>/South Dakota/g' >> "${sed_dictionary_file}" ;
+      printf '%s\n' 's/\<new hampshire\>/New Hampshire/g' >> "${dictionary_sed_script}" ;
+      printf '%s\n' 's/\<new jersey\>/New Jersey/g' >> "${dictionary_sed_script}" ;
+      printf '%s\n' 's/\<new mexico\>/New Mexico/g' >> "${dictionary_sed_script}" ;
+      printf '%s\n' 's/\<new york\>/New York/g' >> "${dictionary_sed_script}" ;
+      printf '%s\n' 's/\<north carolina\>/North Carolina/g' >> "${dictionary_sed_script}" ;
+      printf '%s\n' 's/\<north dakota\>/North Dakota/g' >> "${dictionary_sed_script}" ;
+      printf '%s\n' 's/\<rhode island\>/Rhode Island/g' >> "${dictionary_sed_script}" ;
+      printf '%s\n' 's/\<south carolina\>/South Carolina/g' >> "${dictionary_sed_script}" ;
+      printf '%s\n' 's/\<south dakota\>/South Dakota/g' >> "${dictionary_sed_script}" ;
     fi  # }
 
     ###########################################################################
@@ -1923,12 +1966,12 @@ build_spell_correction_sed_script() {
 
         sed_snippet="$(build_sed_snippet "${misspelt_word}" "${transcript_language}")" ;
         if [ "${sed_snippet}" != '' ] ; then  # {
-          printf '%s\n' "${sed_snippet}" >> "${sed_dictionary_file}" ;
+          printf '%s\n' "${sed_snippet}" >> "${dictionary_sed_script}" ;
         fi  # }
       done  # }
 
   { set +x ; } >/dev/null 2>&1
-  printf '%s' "${sed_dictionary_file}" ;
+  printf '%s' "${dictionary_sed_script}" ;
 
   return 0 ;
 }
@@ -1962,7 +2005,7 @@ run_user_sed_script() {
 ###############################################################################
 # write_a_subtitle_line "${subtitle_file_out}"   \
 #                       transcript_sed_script    \
-#                       sed_dictionary_file      \
+#                       dictionary_sed_script    \
 #                       "${previous_line}"       \
 #                       "${transcript_style}"    \
 #                       "${previous_start_time}" \
@@ -1998,7 +2041,7 @@ run_user_sed_script() {
 write_a_subtitle_line() {
   subtitle_file_out="$1" ; shift ;
   transcript_sed_script="$1" ; shift ;
-  sed_dictionary_file="$1" ; shift ;
+  dictionary_sed_script="$1" ; shift ;
   transcript_line="$1" ; shift ;          # The 'Text' ...
   transcript_style="$1" ; shift ;
   transcript_start_time="$1" ; shift ;
@@ -2009,14 +2052,14 @@ write_a_subtitle_line() {
   local adjustment_made=0 ;
 
     ###########################################################################
-    # See if there's a sed script and run it on the subtitle's 'Text'.
+    # See if there's a sed script and run FIRST it on the subtitle's 'Text'.
     # Note, we've already vetted the file to see if it's legitimate.
     # Amazingly, this inefficient way of running sed doesn't cost too much
     # (of course, it depends on the complexity of the actual sed script)!
     #
-  transcript_line="$(printf "%s" "${transcript_line}"                       \
-                   | run_spell_check_sed_script "${sed_dictionary_file}" \
-                   | run_user_sed_script "${transcript_sed_script}")" ;
+  transcript_line="$(printf "%s" "${transcript_line}"                      \
+                   | run_user_sed_script "${transcript_sed_script}"        \
+                   | run_spell_check_sed_script "${dictionary_sed_script}")" ;
 
   num_words="$(printf '%s' "${transcript_line}" | ${WC} -w)" ;
 
@@ -2028,6 +2071,8 @@ write_a_subtitle_line() {
     # resolution of the timestamp and the algorithm not wanting to be "early".
     #
   if [ ${num_words} -lt ${transcript_wc_threshold} ] ; then  # {
+
+    [ ${num_words} -eq 1 ] && (( num_words++ )) ;
 
     (( line_current_ms = (transcript_end_time - transcript_start_time) * 1000 )) ;
     (( line_estimated_ms = (num_words + 1) * transcript_word_time )) ;
@@ -2079,7 +2124,7 @@ write_a_subtitle_line() {
 #   transcript_style
 #   subtitle_file_out
 #   transcript_sed_script
-#   sed_dictionary_file
+#   dictionary_sed_script
 #
 # We'll use a *very* simple state machine to roll up the transcript into
 # the subtitle file.  Because it's 99% script, this part is pretty expensive.
@@ -2105,7 +2150,7 @@ add_transcript_text_to_subtitle() {
   local transcript_style="$1" ; shift ;
   local subtitle_file_out="$1" ; shift ;
   local transcript_sed_script="$1" ; shift ;
-  local sed_dictionary_file="$1" ; shift ;
+  local dictionary_sed_script="$1" ; shift ;
 
   local transcript_errors=0 ; # After X number of errors, we'll quit
   local transcript_lineno=0 ; # ...so the user can identify glitches
@@ -2224,7 +2269,7 @@ add_transcript_text_to_subtitle() {
          if [ "${previous_line}" != '' ] ; then  # { should __only__ see this once!
            write_a_subtitle_line "${subtitle_file_out}"      \
                                  "${transcript_sed_script}"  \
-                                 "${sed_dictionary_file}"    \
+                                 "${dictionary_sed_script}"  \
                                  "${previous_line}"          \
                                  "${transcript_style}"       \
                                  "${previous_start_time}"    \
@@ -2250,7 +2295,7 @@ add_transcript_text_to_subtitle() {
   (( previous_end_time += 7 )) ; # Yup, it's a hack — but a reasonable hack!
   write_a_subtitle_line "${subtitle_file_out}"      \
                         "${transcript_sed_script}"  \
-                        "${sed_dictionary_file}"    \
+                        "${dictionary_sed_script}"  \
                         "${previous_line}"          \
                         "${transcript_style}"       \
                         "${previous_start_time}"    \
@@ -2449,7 +2494,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: ${default_style},${G_OPTION_TRN_DEFAULT_FONT_NAME},${G_OPTION_TRN_FONT_SIZE},&H6000F8FF,&H000000FF,&H00101010,&H50A0A0A0,-1,0,0,0,100,100,0,0,1,2.75,0,2,100,100,12,1
+Style: ${default_style},${G_OPTION_TRN_DEFAULT_FONT_NAME},${G_OPTION_TRN_FONT_SIZE},&H${G_OPTION_TRN_FONT_TBGR},&H000000FF,&H00101010,&H50A0A0A0,-1,0,0,0,100,100,0,0,1,2.75,0,2,${G_OPTION_TRN_MARGIN},${G_OPTION_TRN_MARGIN},12,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -2474,7 +2519,7 @@ HERE_DOC
     local transcript_language_desc="$([ "${transcript_language}" = '' ] \
             && echo '' || echo "${transcript_language} language ")" ;
 
-    printf "  ${ATTR_YELLOW_BOLD}FOUND - "
+    printf "  ${ATTR_YELLOW_BOLD}PROCESSING - "
     printf "${ATTR_BLUE_BOLD}%s${ATTR_CLR_BOLD}" "${transcript_language_desc}" ;
     printf "${ATTR_CLR_BOLD}transcript file " ;
     printf "'${ATTR_YELLOW}%s${ATTR_CLR_BOLD}' ...\n" "${transcript_file_in}" ;
@@ -2531,10 +2576,10 @@ HERE_DOC
       # Build the spell-correction sed script here.  We __only__ do this once
       # for the 'G_OPTION_TRN_LANGUAGE' option (default is 'English').
       #
-    local sed_dictionary_file='' ; # Spell correction is disabled if NOT set.
+    local dictionary_sed_script='' ; # Spell correction is disabled if NOT set.
     if [ ${G_HAVE_TOOL_ASPELL} -eq 1 \
         -a "${G_OPTION_TRN_LANGUAGE}" = "${transcript_language}" ] ; then  # {
-      sed_dictionary_file="$(build_spell_correction_sed_script \
+      dictionary_sed_script="$(build_spell_correction_sed_script \
                             "${transcript_file_in}"      \
                             "${transcript_language}"     \
                             "${sed_dictionary_basename}" \
@@ -2551,7 +2596,7 @@ HERE_DOC
                             "${transcript_style}"      \
                             "${subtitle_file_out}"     \
                             "${transcript_sed_script}" \
-                            "${sed_dictionary_file}"   \
+                            "${dictionary_sed_script}" \
                             )"; RC=$? ; # Always SUCCESS
       printf '%s' "${function_stats}" ;
       TIMEFORMAT="${ATTR_BLUE_BOLD}%3lR" ; # bash(1) manual page
@@ -2593,6 +2638,7 @@ printf "${ATTR_GREEN_BOLD}%s" "${G_IN_VIDEO_FILE}"
 printf "${ATTR_BLUE_BOLD}' >>${ATTR_OFF} ...\n" ;
 
 echo -ne "${G_OPTION_MESSAGES}" ; # <sic>, couldn't printf this 'cause of '\n's
+echo -ne "${G_OPTION_GLOBAL_MESSAGES}" ;
 
 
   #############################################################################
