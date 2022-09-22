@@ -179,6 +179,7 @@ OPEN_TIC='‘' ;
 export ATTR_OPEN_TIC="${ATTR_CLR_BOLD}${OPEN_TIC}" ;
 CLOSE_TIC='’' ;
 export ATTR_CLOSE_TIC="${ATTR_CLR_BOLD}${CLOSE_TIC}${ATTR_OFF}" ;
+export FB_CHAR='█' ;
 
 # TODO :: I want to standardize more of these message templates.
 export ATTR_ERROR="${ATTR_RED_BOLD}ERROR -${ATTR_OFF}" ;
@@ -374,7 +375,9 @@ G_OPTION_SRT_ITALICS_FONT_NAME="${G_OPTION_SRT_DEFAULT_FONT_NAME}" ;
 
 G_OPTION_TRN_DEFAULT_FONT_NAME='Open Sans Semibold'  ; # Font for Transcript subtitles
 G_OPTION_TRN_FONT_SIZE=46 ;     # The font size for Transcript subtitles
-G_OPTION_TRN_FONT_TBGR='6000F8FF' ; # The font color spec for Transcript subtitles
+G_OPTION_TRN_PRIMARYCOLOR='6000F8FF' ; # The PrimaryColor spec for Transcript subtitles
+G_OPTION_TRN_OUTLINECOLOR='00101010' ; # The OutlineColor spec for Transcript subtitles
+G_OPTION_TRN_OUTLINE_WEIGHT='2.75' ;   # The outline's weight, 0 "disables" the outline
 G_OPTION_TRN_MARGIN=100 ;       # The default left and right text margin
 # TODO FIXME 'Open Sans Semibold' does not exist on blackshed, should print a warning
 G_OPTION_TRN_IS_MUSIC='' ;      # If 'y', then the transcript is music lyrics
@@ -384,7 +387,7 @@ G_OPTION_TRN_MUSIC_CHARS='♩♪♫'; # https://www.alt-codes.net/music_note_alt
                                 # will be added before and after each line.  TODO
                                 # SPECIAL NOTE :: libass does not support emoji,
                                 # so using emoji characters may not always work,
-                                # they may get mapped to their legacy character.
+                                # they may get mapped to their "legacy" character.
 G_OPTION_TRN_WC_THRESHOLD=10 ;  # If the line is less than 10 words, we'll re-time
                                 # the 'End' for the line.  TODO
 G_OPTION_TRN_WORD_TIME=375 ;    # We'll pick the shorter of the two times:
@@ -749,12 +752,87 @@ apply_percentage() {
 
 
 ###############################################################################
-# get_color_spec  option  value  olde_value
+# build_colour(value, prefix_str, fb_char)
+#
+# I like code-bling ...
+# TODO :: add a note that this is an approximate color (via this RC and looked
+#         at by caller).
+#
+build_colour() {
+  value="$1" ; shift ;
+  prefix_str="$1" ; shift ;
+  fb_char="$1" ; shift ;
+
+  if [ "${TERM}" != 'xterm-256color' ] ; then printf '' ; return 0; fi ;
+
+  RGB_RED="${value:6:2}" ;
+  RGB_GREEN="${value:4:2}" ;
+  RGB_BLUE="${value:2:2}" ;
+  printf '%s“\033[38;2;%d;%d;%dm%s%s”' ${ATTR_CLR_BOLD}"${prefix_str}" \
+     $(( 16#${RGB_RED} )) $(( 16#${RGB_GREEN} )) $(( 16#${RGB_BLUE} )) \
+     "${fb_char}${fb_char}${fb_char}" "${ATTR_CLR_BOLD}" ;
+
+  return 0 ;
+}
+
+
+###############################################################################
+# get_decimal_number(option, value, minimum, maximum)
+#
+get_decimal_number() {
+  local my_option="$1" ; shift ;
+  local in_value="$1" ; shift ;
+  local in_minimum="$1" ; shift ;
+  local in_maximum="$1" ; shift ;
+
+
+  local my_regex='^[0-9]+(\.[0-9]+)?$' ;
+  while : ; do  # { # NOTE, 1st regex catches an EMPTY (missing) argument too.
+    if ! [[ "${in_value}" =~ $my_regex ]]                   \
+      || (( $(echo "$in_value < $in_minimum" | ${BC} -l) )) \
+      || (( $(echo "$in_value > $in_maximum" | ${BC} -l) )) \
+    ; then  # {
+      echo >&2 -n "${ATTR_ERROR} '${my_option}=${in_value}' "
+      echo >&2 -n "requires a decimal value n the range of " ;
+      echo >&2    "‘${in_minimum}’ to ‘${in_maximum}.’" ;
+      break ;
+    fi  # }
+
+    printf '%s' "${in_value}" ;
+    return 0;
+  done  # }
+
+    ###########################################################################
+    # FAILURE :: exit; we've already printed an appropriate error message above
+    #
+  abort ${FUNCNAME[0]} ${LINENO};
+}
+
+
+###############################################################################
+# get_color_spec(option, value)
 #
 get_color_spec() {
+  local my_option="$1" ; shift ;
+  local in_value="$1" ; shift ;
 
-  echo '  IN get_color_spec()' ;
-#   G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(get_color_spec "$1" "$2" "${olde_value}")" ;
+  local my_regex='^[0-9a-fA-F]{8}$' ;
+
+  while : ; do  # { # NOTE, this regex catches an EMPTY (missing) argument too.
+    if ! [[ "${in_value}" =~ $my_regex ]] ; then  # {
+      echo >&2 -n "${ATTR_ERROR} '${my_option}=${in_value}' "
+      echo >&2    "requires an 8-digit hexadecimal value in the format of ‘TTBBGGRR.’" ;
+      break ;
+    fi  # }
+
+    printf '%s' "${in_value}" ;
+    return 0;
+  done  # }
+
+    ###########################################################################
+    # FAILURE :: exit; we've already printed an appropriate error message above
+    #
+  abort ${FUNCNAME[0]} ${LINENO};
 }
 
 
@@ -893,7 +971,9 @@ out-dir::,\
 trn-word-time-ms::,\
 trn-is-music,\
 trn-text-margin::,\
-trn-font-tbgr::,\
+trn-font-primarycolor::,\
+trn-font-outlinecolor::,\
+trn-font-outlineweight::,\
 trn-font-size-percent::,\
 trn-words-threshold::,\
 trn-language::,\
@@ -998,12 +1078,35 @@ while true ; do  # {
         printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
     shift 2;
     ;;
-  --trn-font-tbgr)
-#-- G_OPTION_TRN_FONT_TBGR=
-    olde_value="${G_OPTION_TRN_FONT_TBGR}" ;
-#-- G_OPTION_TRN_FONT_TBGR="$(get_color_spec "$1" "$2" "${olde_value}")" ;
-    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(get_color_spec "$1" "$2" "${olde_value}")\n" ;
-    G_OPTION_TRN_FONT_TBGR="$2" ;
+  --trn-font-primarycolor)
+    olde_value="${G_OPTION_TRN_PRIMARYCOLOR}" ;
+    G_OPTION_TRN_PRIMARYCOLOR="$(get_color_spec "$1" "$2" "${olde_value}")" ;
+    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+        echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's PrimaryColor ${ATTR_CLR_BOLD}" ;
+        echo -n "(from ${olde_value}$(build_colour ${olde_value} ', ' "${FB_CHAR}"))${ATTR_OFF} "
+        echo -n "${ATTR_CLR_BOLD}to ${G_OPTION_TRN_PRIMARYCOLOR}" ;
+        echo -n "$(build_colour $2 ', ' "${FB_CHAR}")" ;
+        printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
+    shift 2;
+    ;;
+  --trn-font-outlinecolor)
+    olde_value="${G_OPTION_TRN_OUTLINECOLOR}" ;
+    G_OPTION_TRN_OUTLINECOLOR="$(get_color_spec "$1" "$2" "${olde_value}")" ;
+    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+        echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's OutlineColor ${ATTR_CLR_BOLD}" ;
+        echo -n "(from ${olde_value}$(build_colour ${olde_value} ', ' "${FB_CHAR}"))${ATTR_OFF} "
+        echo -n "${ATTR_CLR_BOLD}to ${G_OPTION_TRN_OUTLINECOLOR}" ;
+        echo -n "$(build_colour $2 ', ' "${FB_CHAR}")" ;
+        printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
+    shift 2;
+    ;;
+  --trn-font-outlineweight)
+    olde_value="${G_OPTION_TRN_OUTLINE_WEIGHT}" ;
+    G_OPTION_TRN_OUTLINE_WEIGHT="$(get_decimal_number "$1" "$2" '0.0' '25.0')" ;
+    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+        echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's outline weight ${ATTR_CLR_BOLD}" ;
+        echo -n "(from ${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}$2" ;
+        printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
     shift 2;
     ;;
   --trn-font-size-percent)
@@ -1058,6 +1161,7 @@ while true ; do  # {
     G_OPTION_VERBOSE='y' ; shift ;
     ;;
   -h|--help)
+    # TODO allow help arg to be an option in which detailed option help is displayed
     case "$2" in
      '')     my_usage 0 ;        ;;
      'full') my_usage 0 "'$2'" ; ;;
@@ -1079,6 +1183,7 @@ done ;  # }
 
   #############################################################################
   # Do the remaining input validation here
+  # FIXME :: this should also catch EXTRA arguments
   #
 if [ $# -ne 1 ] ; then
   echo "${ATTR_ERROR} no input filename was specified" ;
@@ -2493,8 +2598,19 @@ PlayResY: 720
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: ${default_style},${G_OPTION_TRN_DEFAULT_FONT_NAME},${G_OPTION_TRN_FONT_SIZE},&H${G_OPTION_TRN_FONT_TBGR},&H000000FF,&H00101010,&H50A0A0A0,-1,0,0,0,100,100,0,0,1,2.75,0,2,${G_OPTION_TRN_MARGIN},${G_OPTION_TRN_MARGIN},12,1
+Format: Name, Fontname, Fontsize,\
+ PrimaryColour, OutlineColour,\
+ SecondaryColour, BackColour,\
+ Bold, Italic, Underline, StrikeOut,\
+ ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow,\
+ Alignment, MarginL, MarginR, MarginV, Encoding
+\
+Style: ${default_style},${G_OPTION_TRN_DEFAULT_FONT_NAME},${G_OPTION_TRN_FONT_SIZE},\
+&H${G_OPTION_TRN_PRIMARYCOLOR},&H${G_OPTION_TRN_OUTLINECOLOR},\
+&H00000000,&H00000000,\
+-1,0,0,0,\
+100,100,0,0,1,${G_OPTION_TRN_OUTLINE_WEIGHT},0,\
+2,${G_OPTION_TRN_MARGIN},${G_OPTION_TRN_MARGIN},12,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
