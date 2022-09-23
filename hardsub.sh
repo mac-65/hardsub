@@ -69,6 +69,12 @@ fi
 # - Is this what's happening to the older videos?
 #   https://forum.videohelp.com/threads/397242-FFMPEG-Interlaced-MPEG2-video-to-x264-Issue
 #
+# - for transcripts -- doesn't tell user that ASS file is already there (okay,
+#   but would like a message)
+#
+# - Add a --probe-subtitles and --probe-audio to get the regex string to
+#   use to get the desired subtitle and / or audio track for re-encoding.
+#
 # ☻ It'd be really fun to add a title card to videos w/transcript file.  The
 #   user could could specify the background image and duration.  The duration
 #   would be added to all of the timestamps (of course) and libass could
@@ -388,12 +394,14 @@ G_OPTION_TRN_MUSIC_CHARS='♩♪♫'; # https://www.alt-codes.net/music_note_alt
                                 # SPECIAL NOTE :: libass does not support emoji,
                                 # so using emoji characters may not always work,
                                 # they may get mapped to their "legacy" character.
-G_OPTION_TRN_WC_THRESHOLD=10 ;  # If the line is less than 10 words, we'll re-time
-                                # the 'End' for the line.  TODO
+G_OPTION_TRN_WC_THRESHOLD=22 ;  # If the line is less than 22 words, we'll re-time
+                                # the 'End' for the line.  Along with the tuning
+                                # provided by 'trn-word-time-ms', this does a
+                                # decent job of calculating the 'End' value of
+                                # a subtitle's text.
 G_OPTION_TRN_WORD_TIME=375 ;    # We'll pick the shorter of the two times:
                                 # - the implied time, and
-                                # - the # of words spoken times this vaule.
-                                # TODO add command line option for this value
+                                # - # of words spoken multiplied by this value.
                                 # TODO default the GENRE to 'Transcript' if it's
                                 #      not provided on the command line.
 G_TRN_WORD_TIME_MIN=200 ;       # The minimum value allowed for 'G_OPTION_TRN_WORD_TIME'
@@ -413,7 +421,9 @@ C_SED_SCRIPTS_DIR="${C_SUBTITLE_IN_DIR}" ; # ... for now use the same location
   #############################################################################
   # Tags which are used in transcript files: O, optional tag; R, required tag.
   #
-C_TRN_TAG_LANGUAGE='^#L ' ;     # O, Language tag for spell correction
+C_TRN_TAG_LANGUAGE='#L ' ;      # O, Language tag for spell correction
+C_TRN_TAG_TITLE='#T ' ;         # Video's title if different than filename
+C_TRN_TAG_CHANNEL='#U ' ;       # U-tube channel
 export C_TRN_TAG_LANGUAGE ;
 
   #############################################################################
@@ -497,8 +507,47 @@ C_METADATA_COMMENT='' ;          # Search for this to modify what is included
 #  the subtitle filter is applied __last__.  Suppose you wanted to unsharp,
 #  denoise, etc., you probably don't want those applied to the subtitles.
 # https://stackoverflow.com/questions/6195872/applying-multiple-filters-at-once-with-ffmpeg
+# https://www.makeuseof.com/tag/avi-mkv-mp4-video-filetypes-explained-compared/
 #
+C_OUTPUT_CONTAINER='avi' ; # Some older TVs may be able to read MKV files...
 C_OUTPUT_CONTAINER='mp4' ; # Some older TVs may be able to read MKV files...
+C_OUTPUT_CONTAINER='mkv' ; # Some older TVs may be able to read MKV files...
+
+###############################################################################
+# C O N T A I N E R   M E T A D A T A   D I F F E R E N C E S   I N   V L C
+# ==> vlc-3.0.17.2, Under the "Tools" -> "Media Information" -> "General" tab
+# -----------------------------------------------------------------------------
+#                 AVI       (ffmpeg)   MP4                  MKV
+#                 -------------------  -------------------  -------------------
+#   Title         title      (INAM)    title                title
+#   Artist        artist     (IART)    artist               --
+#   Album         --                   album                album
+#   Genre         genre      (IGNR)    genre                genre
+#   Now Playing   --                   --
+#   Publisher     --                   --                   publisher
+#   Copyright     copyright  (ICOP)    --                   copyright
+#   Encoded by    --                   "Lavf58.76.100"      --
+#   Comments      comment    (ICMT)    comment              comment
+# -----------------------------------------------------------------------------
+# Under the "Tools" -> "Media Information" -> "Metadata" tab
+# AVI ::
+#   Software :: (ISFT) :: "Lavf58.76.100"
+#   Product  :: (IPRD) :: the data from ffmpeg's "album" metadata tag
+# MP4 ::
+#   --  no metadata tags are shown in this tab
+# MKV :: these additional tags, if set, can appear under this tab:
+#   tag name        ffmpeg metadata tag name (when known)
+#   ------------ || -------------------------------------
+#   SHOW         :: show
+#   ALBUM_ARTIST :: album_artist
+#   AUTHOR       :: author
+#   YEAR         :: year
+#   NETWORK      :: network
+#   DURATION     :: (copied from source by ffmpeg)
+#   HANDLER_NAME :: "...produced by Google..." (copied from source by ffmpeg)
+#   ENCODER      :: "Lavf58.76.100"
+#   PRODUCER     :: producer
+#
 
 G_SUBTITLE_PATHNAME='' ; # Built by this script
 
@@ -518,7 +567,7 @@ my_usage() {
 
   tput sgr0 ;
   echo "USAGE ::" ; # TODO :: add some help text
-  echo -n ' ls *.flv *.avi *.mkv *.mp4 *.MP4 *.webm *.ts *.mpg *.vob *.VOB 2>/dev/null '
+  echo -n ' ls *.flv *.avi *.mkv *.mp4 *.MP4 *.webm *.ts *.mpg *.vob *.VOB *.m2ts 2>/dev/null '
   echo    '| while read yy ; do '$0' "${yy}" ; done' ;
 
   exit $L_RC ;
@@ -793,7 +842,7 @@ get_decimal_number() {
       || (( $(echo "$in_value > $in_maximum" | ${BC} -l) )) \
     ; then  # {
       echo >&2 -n "${ATTR_ERROR} '${my_option}=${in_value}' "
-      echo >&2 -n "requires a decimal value n the range of " ;
+      echo >&2 -n "requires a decimal value in the range of " ;
       echo >&2    "‘${in_minimum}’ to ‘${in_maximum}.’" ;
       break ;
     fi  # }
@@ -2623,9 +2672,9 @@ HERE_DOC
     local transcript_file_in="$1" ; shift ;
     local transcript_style="${default_style}" ;
 
-    local transcript_language="$(${GREP} "${C_TRN_TAG_LANGUAGE}" \
-                                         "${transcript_file_in}" \
-                               | tail -1                         \
+    local transcript_language="$(${GREP} "^${C_TRN_TAG_LANGUAGE}" \
+                                         "${transcript_file_in}"  \
+                               | tail -1                          \
                                | ${CUT} -d' ' -f2)" ;
     if [ "${transcript_language}" = '' \
         -a ${number_of_transcript_files} -eq 1 ] ; then  # {
@@ -3031,11 +3080,18 @@ if [ "${G_OPTION_NO_METADATA}" = '' ] ; then  # {
   if [ "${G_METADATA_GENRE}" != '' ] ; then  # {
     FFMPEG_METADATA="${FFMPEG_METADATA} '-metadata' 'genre=${G_METADATA_GENRE}'" ;
   fi  # }
+
+    ###########################################################################
+    # WWWW will this work ...? copyright album_artist
+##--  FFMPEG_METADATA="${FFMPEG_METADATA} '-metadata' 'show=show U-tube channel' '-metadata' 'network=network U-tube channel' '-metadata' 'producer=producer U-tube channel' '-metadata' 'publisher=publisher U-tube channel' '-metadata' 'author=author U-tube channel' '-metadata' 'album=album U-tube channel' '-metadata' 'artist=artist U-tube channel' '-metadata' 'copyright=copyright 2022' '-metadata' 'album_artist=Album artist' '-metadata' 'year=year 1956'" ;
+
   { set +x ; } >/dev/null 2>&1
 fi  # }
 
 
 ###############################################################################
+# これは複雑な混乱ですが、うまくいきます！
+#
 # Welcome to the wonderful world of shell escapes and building CLI strings!
 # I wish ffmpeg could append '-vf' filter arguments together -- maybe there's
 # a sound reason for why it doesn't, but it makes building '-vf' dynamically
