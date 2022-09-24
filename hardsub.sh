@@ -69,11 +69,8 @@ fi
 # - Is this what's happening to the older videos?
 #   https://forum.videohelp.com/threads/397242-FFMPEG-Interlaced-MPEG2-video-to-x264-Issue
 #
-# - for transcripts -- doesn't tell user that ASS file is already there (okay,
-#   but would like a message)
-#
-# - Add a --probe-subtitles and --probe-audio to get the regex string to
-#   use to get the desired subtitle and / or audio track for re-encoding.
+# - for transcripts -- doesn't tell user that ASS file is already there
+#   (okay, but would like to see a message)
 #
 # ☻ It'd be really fun to add a title card to videos w/transcript file.  The
 #   user could could specify the background image and duration.  The duration
@@ -258,6 +255,7 @@ trap 'exit_handler' EXIT ;
 # - mkvtoolnix
 # - sed + pcre2 (the library)
 # - coreutils   - basename, cut, head, sort, tail, tee, et. al.
+# - util-linux  - getopt (not bash's getopts())
 # - fontconfig  - used to validate a fontname (e.g., '--srt-default-font=...)
 # - grep        - includes 'egrep' via script or hard-link to grep
 # - bc          - for (re-)calculating font sizes (floating point math)
@@ -960,6 +958,40 @@ get_option_string() {
 
 
 ###############################################################################
+# probe_video(video_file)
+#
+# Perform a probe of the video file tracks.  Typical output may look like -->
+#
+#   0 'video' 'V_MPEG4/ISO/AVC' null 'und'
+#   1 'audio' 'A_AAC' null 'jpn'
+#   2 'subtitles' 'S_TEXT/ASS' 'English subs' 'eng'
+#
+# This info may be needed to correctly select (TODO) the:
+#   - correct or desired subtitle tracks, and/or
+#   - desired audio track.
+#
+# Because of the order of these functions, this is the last function called
+# (so its message is appended to the end).
+#
+probe_video() {
+  local video_file="$1" ; shift ;
+
+  G_OPTION_GLOBAL_MESSAGES="${G_OPTION_GLOBAL_MESSAGES}$(\
+    printf "  ${ATTR_YELLOW_BOLD}PROBE OF ${ATTR_CLR_BOLD}'${ATTR_YELLOW}%s%s\n" \
+           "${video_file}" \
+           "${ATTR_CLR_BOLD}' ${ATTR_YELLOW_BOLD}TRACKS:${ATTR_CLR_BOLD}" ;
+    mkvmerge -i -F json "${video_file}" \
+        | jq '.tracks[]'                \
+        | jq -r '[.id, .type, .properties.codec_id, .properties.track_name, .properties.language]|@sh' \
+        | sed -e "s/video/${ATTR_YELLOW_BOLD}video${ATTR_CLR_BOLD}/" \
+              -e "s/audio/${ATTR_BLUE_BOLD}audio${ATTR_CLR_BOLD}/" \
+              -e "s/subtitles/${ATTR_GREEN}subtitles${ATTR_CLR_BOLD}/" \
+              -e 's/^/    /'
+      )\\n" ;
+}
+
+
+###############################################################################
 # If not disabled, then echo out any other command line options which affect
 # the video's encoding (e.g., changing the font face and/or size).
 #
@@ -981,18 +1013,27 @@ initialize_variables() {
     # "best font available."  So, we capture it here ...
     #
   G_INVALID_FONT_NAME="$(${FC_MATCH} '')" ;
+
+  G_SCRIPT_RUN_DATE="$(${DATE} "${DATE_FORMAT}")" ; # Do this just ONCE per/run.
+
+  G_OPTION_MESSAGES='' ;
+  G_OPTION_GLOBAL_MESSAGES='' ; # Show these messages last on the console
 }
 
 
 if [ $# -eq 0 ] ; then
 
-  my_usage 2;
+  my_usage 2; # FIXME -- is this still needed?
 fi
 
+initialize_variables ;
+
 
 ###############################################################################
 ###############################################################################
 ###############################################################################
+# my_getopt()
+#
 # Setup and use getopt() for the command line arguments.
 # Stuff the parsed options back into the arg[] list (quotes are essential)...
 # (You know, I don't remember why I originally chose this particular method.)
@@ -1005,8 +1046,12 @@ fi
 # is an EMPTY string (''), then an "optional" argument was NOT provided.
 # I think this makes the command line easier to read and less error prone.
 #
-HS_OPTIONS=`getopt -o dh::vc:f:yt:q: \
-    --long help::,verbose,config:,fonts-dir:,copy-to:,quality:,\
+my_getopt()
+{
+  local do_probe=0 ;
+
+  HS_OPTIONS=`getopt -o dph::vc:f:yt:q: \
+      --long help::,verbose,config:,fonts-dir:,copy-to:,quality:,\
 dry-run,\
 debug,\
 mono,\
@@ -1015,6 +1060,7 @@ no-comment,\
 no-metadata,\
 no-modify-srt,\
 no-fuzzy,\
+probe,\
 preset::,\
 out-dir::,\
 trn-word-time-ms::,\
@@ -1033,213 +1079,241 @@ srt-font-size-percent::,\
 font-check:: \
     -n "${ATTR_ERROR} ${ATTR_BLUE_BOLD}${C_SCRIPT_NAME}${ATTR_YELLOW}" -- "$@"` ;
 
-if [ $? != 0 ] ; then
-   my_usage 1 ;
-fi
+  if [ $? != 0 ] ; then
+     my_usage 1 ;
+  fi
 
-initialize_variables ;
+  eval set -- "${HS_OPTIONS}" ;
+  while true ; do  # {
+    SEP=' ' ;
 
-G_OPTION_MESSAGES='' ;
-G_OPTION_GLOBAL_MESSAGES='' ; # Show these messages last on the console
-
-eval set -- "${HS_OPTIONS}" ;
-while true ; do  # {
-  SEP=' ' ;
-
-  case "$1" in  # {
-  --mono)
-    G_OPTION_MONO=1 ; shift ;
-    ;;
-  --no-subs)
-    G_OPTION_NO_SUBS='y' ; shift ;
-    ;;
-  --no-modify-srt)
-    G_OPTION_NO_MODIFY_SRT='y' ; shift ;
-    ;;
-# --mux-subs)   # If there are subtitles, then also MUX them into the video
-#   ;;
-  -d|--dry-run)
-    G_OPTION_GLOBAL_MESSAGES="${G_OPTION_GLOBAL_MESSAGES}$(\
-        printf "  ${ATTR_YELLOW_BOLD}DRY RUN - ${ATTR_OFF}%s\\\n" \
-               'ffmpeg will NOT be run after the video’s preprocessing')" ;
-    G_OPTION_DRY_RUN='y' ; shift ;
-    ;;
-  --debug)
-    G_OPTION_GLOBAL_MESSAGES="${G_OPTION_GLOBAL_MESSAGES}$(\
-        printf "  ${ATTR_YELLOW_BOLD}DEBUG RUN - ${ATTR_OFF}%s\\\n" \
-               'ffmpeg will run with very fast, low quality settings')" ;
-    G_OPTION_DEBUG='y' ; shift ;
-    ;;
-  --no-metadata)
-    G_OPTION_NO_METADATA='y' ; shift ;
-    ;;
-  --no-comment)
-    G_OPTION_NO_COMMENT='y' ; shift ;
-    ;;
-  --no-fuzzy)
-    G_OPTION_NO_FUZZY='y' ; shift ;
-    ;;
-  --out-dir)
-    G_VIDEO_OUT_DIR="$(check_and_build_directory "$1" "$2")" ;
-    shift 2;
-    ;;
-  --font-check)
-    font_check_name="$(check_font_name '' "$1" "$2" 0)" ; RC=$? ;
-    if [ ${RC} -eq 0 -o ${RC} -eq 2 ] ; then  # {
-      if [ "${font_check_name}" = "$2" ] ; then  # {
-        printf "  ${ATTR_GREEN_BOLD}FONT CHECK - ${ATTR_OFF}" ;
-        printf "'${ATTR_GREEN}%s${ATTR_CLR_BOLD}' is an exact match " "$2" ;
-        printf "for the Style's font name\n" ;
-      else  # }{
-        printf "  ${ATTR_BROWN_BOLD}FONT CHECK - ${ATTR_OFF}" ;
-        printf "'${ATTR_YELLOW}%s${ATTR_OFF}' found; use " "$2" ;
-        printf "'${ATTR_YELLOW}%s${ATTR_OFF}' as the Style's font name\n" \
-               "${font_check_name}" ;
+    case "$1" in  # {
+    --mono)
+      G_OPTION_MONO=1 ; shift ;
+      ;;
+    --no-subs)
+      G_OPTION_NO_SUBS='y' ; shift ;
+      ;;
+    --no-modify-srt)
+      G_OPTION_NO_MODIFY_SRT='y' ; shift ;
+      ;;
+  # --mux-subs)   # If there are subtitles, then also MUX them into the video
+  #   ;;
+    -p|--probe)
+      do_probe=1 ; shift ;
+      ;;
+    -d|--dry-run)
+      G_OPTION_GLOBAL_MESSAGES="${G_OPTION_GLOBAL_MESSAGES}$(\
+          printf "  ${ATTR_YELLOW_BOLD}DRY RUN - ${ATTR_OFF}%s\\\n" \
+                 'ffmpeg will NOT be run after the video’s preprocessing')" ;
+      G_OPTION_DRY_RUN='y' ; shift ;
+      ;;
+    --debug)
+      G_OPTION_GLOBAL_MESSAGES="${G_OPTION_GLOBAL_MESSAGES}$(\
+          printf "  ${ATTR_YELLOW_BOLD}DEBUG RUN - ${ATTR_OFF}%s\\\n" \
+                 'ffmpeg will run with very fast, low quality settings')" ;
+      G_OPTION_DEBUG='y' ; shift ;
+      ;;
+    --no-metadata)
+      G_OPTION_NO_METADATA='y' ; shift ;
+      ;;
+    --no-comment)
+      G_OPTION_NO_COMMENT='y' ; shift ;
+      ;;
+    --no-fuzzy)
+      G_OPTION_NO_FUZZY='y' ; shift ;
+      ;;
+    --out-dir)
+      G_VIDEO_OUT_DIR="$(check_and_build_directory "$1" "$2")" ;
+      shift 2;
+      ;;
+    --font-check)
+      font_check_name="$(check_font_name '' "$1" "$2" 0)" ; RC=$? ;
+      if [ ${RC} -eq 0 -o ${RC} -eq 2 ] ; then  # {
+        if [ "${font_check_name}" = "$2" ] ; then  # {
+          printf "  ${ATTR_GREEN_BOLD}FONT CHECK - ${ATTR_OFF}" ;
+          printf "'${ATTR_GREEN}%s${ATTR_CLR_BOLD}' is an exact match " "$2" ;
+          printf "for the Style's font name\n" ;
+        else  # }{
+          printf "  ${ATTR_BROWN_BOLD}FONT CHECK - ${ATTR_OFF}" ;
+          printf "'${ATTR_YELLOW}%s${ATTR_OFF}' found; use " "$2" ;
+          printf "'${ATTR_YELLOW}%s${ATTR_OFF}' as the Style's font name\n" \
+                 "${font_check_name}" ;
+        fi  # }
       fi  # }
+      shift 2;
+      ;;
+    --srt-default-font)
+      G_OPTION_SRT_DEFAULT_FONT_NAME="$(check_font_name "${G_OPTION_SRT_DEFAULT_FONT_NAME}" "$1" "$2" 0)" ;
+      echo "  NEW 'Default' FONT = '${G_OPTION_SRT_DEFAULT_FONT_NAME}'" ;
+      shift 2;
+      ;;
+    --srt-italics-font)
+      G_OPTION_SRT_ITALICS_FONT_NAME="$(check_font_name "${G_OPTION_SRT_ITALICS_FONT_NAME}" "$1" "$2" 0)" ;
+      echo "  NEW 'Italics' FONT = '${G_OPTION_SRT_ITALICS_FONT_NAME}'" ;
+      shift 2;
+      ;;
+    --srt-font-size-percent)
+      olde_value="${G_OPTION_SRT_FONT_SIZE}" ;
+      G_OPTION_SRT_FONT_SIZE="$(apply_percentage "$1" "$2" "${G_OPTION_SRT_FONT_SIZE}" 1)" ;
+      echo -n "${ATTR_YELLOW_BOLD}  SETTING SubRip font size ${ATTR_CLR_BOLD}" ;
+      echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_SRT_FONT_SIZE}" ;
+      echo    "${ATTR_CLR_BOLD} ($2%).${ATTR_OFF}" ;
+        # TODO :: add a note about this to the comments IF the video really has SubRip subtitles
+      shift 2;
+      ;;
+    --trn-text-margin)
+      olde_value="${G_OPTION_TRN_MARGIN}" ;
+      G_OPTION_TRN_MARGIN="$(get_option_integer "$1" "$2" 25 200)" ;
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's left and right margin ${ATTR_CLR_BOLD}" ;
+          echo -n "(from ${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_MARGIN}" ;
+          printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
+      shift 2;
+      ;;
+    --trn-font-primarycolor)
+      olde_value="${G_OPTION_TRN_PRIMARYCOLOR}" ;
+      G_OPTION_TRN_PRIMARYCOLOR="$(get_color_spec "$1" "$2" "${olde_value}")" ;
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's PrimaryColor ${ATTR_CLR_BOLD}" ;
+          echo -n "(from ${olde_value}$(build_colour ${olde_value} ', ' "${FB_CHAR}"))${ATTR_OFF} "
+          echo -n "${ATTR_CLR_BOLD}to ${G_OPTION_TRN_PRIMARYCOLOR}" ;
+          echo -n "$(build_colour $2 ', ' "${FB_CHAR}")" ;
+          printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
+      shift 2;
+      ;;
+    --trn-font-outlinecolor)
+      olde_value="${G_OPTION_TRN_OUTLINECOLOR}" ;
+      G_OPTION_TRN_OUTLINECOLOR="$(get_color_spec "$1" "$2" "${olde_value}")" ;
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's OutlineColor ${ATTR_CLR_BOLD}" ;
+          echo -n "(from ${olde_value}$(build_colour ${olde_value} ', ' "${FB_CHAR}"))${ATTR_OFF} "
+          echo -n "${ATTR_CLR_BOLD}to ${G_OPTION_TRN_OUTLINECOLOR}" ;
+          echo -n "$(build_colour $2 ', ' "${FB_CHAR}")" ;
+          printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
+      shift 2;
+      ;;
+    --trn-font-outlineweight)
+      olde_value="${G_OPTION_TRN_OUTLINE_WEIGHT}" ;
+      G_OPTION_TRN_OUTLINE_WEIGHT="$(get_decimal_number "$1" "$2" '0.0' '25.0')" ;
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's outline weight ${ATTR_CLR_BOLD}" ;
+          echo -n "(from ${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}$2" ;
+          printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
+      shift 2;
+      ;;
+    --trn-font-size-percent)
+      olde_value="${G_OPTION_TRN_FONT_SIZE}" ;
+      G_OPTION_TRN_FONT_SIZE="$(apply_percentage "$1" "$2" "${olde_value}" 1)" ;
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's font size ${ATTR_CLR_BOLD}" ;
+          echo -n "(from ${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_FONT_SIZE}" ;
+          printf    "${ATTR_CLR_BOLD} ($2%%).${ATTR_OFF}\\\n")" ;
+        # TODO :: add a note about this to the comments IF the video really has a transcript
+      shift 2;
+      ;;
+    --trn-word-time-ms)
+      olde_value="${G_OPTION_TRN_WORD_TIME}" ;
+      G_OPTION_TRN_WORD_TIME="$(get_option_integer "$1" "$2" ${G_TRN_WORD_TIME_MIN})" ;
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's word time ${ATTR_CLR_BOLD}" ;
+          echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_WORD_TIME}" ;
+          printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
+      shift 2;
+      ;;
+    --trn-words-threshold)
+      olde_value="${G_OPTION_TRN_WC_THRESHOLD}" ;
+      G_OPTION_TRN_WC_THRESHOLD="$(get_option_integer "$1" "$2" 2 40)" ;
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's word count threshold "
+          echo -n "for End time recalculation${ATTR_CLR_BOLD} " ;
+          echo -n "(${olde_value})${ATTR_OFF} to " ;
+          printf "${ATTR_GREEN_BOLD}%d${ATTR_CLR_BOLD} words.${ATTR_OFF}\\\n"\
+                 "${G_OPTION_TRN_WC_THRESHOLD}")" ;
+      shift 2;
+      ;;
+    --trn-language)
+      G_OPTION_TRN_LANGUAGE="$(get_option_string "$1" "$2")" ;
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          printf "${ATTR_YELLOW_BOLD}  SETTING transcript's spell check language to " ;
+          printf "${ATTR_CLR_BOLD}'${ATTR_GREEN_BOLD}%s${ATTR_CLR_BOLD}'.\\\n" \
+                 "${G_OPTION_TRN_LANGUAGE}")" ;
+      shift 2;
+      ;;
+    --trn-disable-sed)
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          printf "${ATTR_YELLOW_BOLD}  DISABLING transcript's sed scripts.${ATTR_OFF}\\\n")" ;
+      G_OPTION_TRN_SED_SCRIPT_DISABLE=1 ; shift ;
+      ;;
+    --preset)
+      (( G_OPTION_PRESETS++ ));
+      configure_preset "$1" "$2" "${G_OPTION_PRESETS}" ;
+      shift 2;
+      ;;
+    -v|--verbose)
+      G_OPTION_VERBOSE='y' ; shift ;
+      ;;
+    -h|--help)
+      # TODO allow help arg to be an option in which detailed option help is displayed
+      case "$2" in
+       '')     my_usage 0 ;        ;;
+       'full') my_usage 0 "'$2'" ; ;;
+       *)      my_usage 1 "'$2'" ; ;;
+      esac
+      ;;
+    --)
+      shift ;
+      break ;
+      ;;
+    *)
+      echo -n "${ATTR_ERROR} fatal script error - option handler for " ;
+      echo    "'${ATTR_YELLOW_BOLD}$1${ATTR_OFF}' not written!!!" ;
+      echo    "${ATTR_YELLOW_BOLD}Terminating...${ATTR_OFF}" >&2 ; exit 5 ;
+      ;;
+    esac  # }
+  done ;  # }
+
+    ###########################################################################
+    # Okay, see if we're expecting a video filename ...
+    #
+  if [ "${G_IN_VIDEO_FILE}" = '' ] ; then  # {
+    if [ $# -eq 0 ] ; then  # {
+      printf "${ATTR_ERROR} no input filename was specified\n" $# ;
+      abort ${FUNCNAME[0]} ${LINENO};
+    elif [ $# -ne 1 ] ; then  # }{
+      printf "${ATTR_ERROR} extra arguments∕filenames were specified (argc = %d)\n" $# ;
+      abort ${FUNCNAME[0]} ${LINENO};
     fi  # }
-    shift 2;
-    ;;
-  --srt-default-font)
-    G_OPTION_SRT_DEFAULT_FONT_NAME="$(check_font_name "${G_OPTION_SRT_DEFAULT_FONT_NAME}" "$1" "$2" 0)" ;
-    echo "  NEW 'Default' FONT = '${G_OPTION_SRT_DEFAULT_FONT_NAME}'" ;
-    shift 2;
-    ;;
-  --srt-italics-font)
-    G_OPTION_SRT_ITALICS_FONT_NAME="$(check_font_name "${G_OPTION_SRT_ITALICS_FONT_NAME}" "$1" "$2" 0)" ;
-    echo "  NEW 'Italics' FONT = '${G_OPTION_SRT_ITALICS_FONT_NAME}'" ;
-    shift 2;
-    ;;
-  --srt-font-size-percent)
-    olde_value="${G_OPTION_SRT_FONT_SIZE}" ;
-    G_OPTION_SRT_FONT_SIZE="$(apply_percentage "$1" "$2" "${G_OPTION_SRT_FONT_SIZE}" 1)" ;
-    echo -n "${ATTR_YELLOW_BOLD}  SETTING SubRip font size ${ATTR_CLR_BOLD}" ;
-    echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_SRT_FONT_SIZE}" ;
-    echo    "${ATTR_CLR_BOLD} ($2%).${ATTR_OFF}" ;
-      # TODO :: add a note about this to the comments IF the video really has SubRip subtitles
-    shift 2;
-    ;;
-  --trn-text-margin)
-    olde_value="${G_OPTION_TRN_MARGIN}" ;
-    G_OPTION_TRN_MARGIN="$(get_option_integer "$1" "$2" 25 200)" ;
-    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-        echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's left and right margin ${ATTR_CLR_BOLD}" ;
-        echo -n "(from ${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_MARGIN}" ;
-        printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
-    shift 2;
-    ;;
-  --trn-font-primarycolor)
-    olde_value="${G_OPTION_TRN_PRIMARYCOLOR}" ;
-    G_OPTION_TRN_PRIMARYCOLOR="$(get_color_spec "$1" "$2" "${olde_value}")" ;
-    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-        echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's PrimaryColor ${ATTR_CLR_BOLD}" ;
-        echo -n "(from ${olde_value}$(build_colour ${olde_value} ', ' "${FB_CHAR}"))${ATTR_OFF} "
-        echo -n "${ATTR_CLR_BOLD}to ${G_OPTION_TRN_PRIMARYCOLOR}" ;
-        echo -n "$(build_colour $2 ', ' "${FB_CHAR}")" ;
-        printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
-    shift 2;
-    ;;
-  --trn-font-outlinecolor)
-    olde_value="${G_OPTION_TRN_OUTLINECOLOR}" ;
-    G_OPTION_TRN_OUTLINECOLOR="$(get_color_spec "$1" "$2" "${olde_value}")" ;
-    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-        echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's OutlineColor ${ATTR_CLR_BOLD}" ;
-        echo -n "(from ${olde_value}$(build_colour ${olde_value} ', ' "${FB_CHAR}"))${ATTR_OFF} "
-        echo -n "${ATTR_CLR_BOLD}to ${G_OPTION_TRN_OUTLINECOLOR}" ;
-        echo -n "$(build_colour $2 ', ' "${FB_CHAR}")" ;
-        printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
-    shift 2;
-    ;;
-  --trn-font-outlineweight)
-    olde_value="${G_OPTION_TRN_OUTLINE_WEIGHT}" ;
-    G_OPTION_TRN_OUTLINE_WEIGHT="$(get_decimal_number "$1" "$2" '0.0' '25.0')" ;
-    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-        echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's outline weight ${ATTR_CLR_BOLD}" ;
-        echo -n "(from ${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}$2" ;
-        printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
-    shift 2;
-    ;;
-  --trn-font-size-percent)
-    olde_value="${G_OPTION_TRN_FONT_SIZE}" ;
-    G_OPTION_TRN_FONT_SIZE="$(apply_percentage "$1" "$2" "${olde_value}" 1)" ;
-    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-        echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's font size ${ATTR_CLR_BOLD}" ;
-        echo -n "(from ${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_FONT_SIZE}" ;
-        printf    "${ATTR_CLR_BOLD} ($2%%).${ATTR_OFF}\\\n")" ;
-      # TODO :: add a note about this to the comments IF the video really has a transcript
-    shift 2;
-    ;;
-  --trn-word-time-ms)
-    olde_value="${G_OPTION_TRN_WORD_TIME}" ;
-    G_OPTION_TRN_WORD_TIME="$(get_option_integer "$1" "$2" ${G_TRN_WORD_TIME_MIN})" ;
-    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-        echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's word time ${ATTR_CLR_BOLD}" ;
-        echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_WORD_TIME}" ;
-        printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
-    shift 2;
-    ;;
-  --trn-words-threshold)
-    olde_value="${G_OPTION_TRN_WC_THRESHOLD}" ;
-    G_OPTION_TRN_WC_THRESHOLD="$(get_option_integer "$1" "$2" 2 40)" ;
-    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-        echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's word count threshold "
-        echo -n "for End time recalculation${ATTR_CLR_BOLD} " ;
-        echo -n "(${olde_value})${ATTR_OFF} to " ;
-        printf "${ATTR_GREEN_BOLD}%d${ATTR_CLR_BOLD} words.${ATTR_OFF}\\\n"\
-               "${G_OPTION_TRN_WC_THRESHOLD}")" ;
-    shift 2;
-    ;;
-  --trn-language)
-    G_OPTION_TRN_LANGUAGE="$(get_option_string "$1" "$2")" ;
-    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-        printf "${ATTR_YELLOW_BOLD}  SETTING transcript's spell check language to " ;
-        printf "${ATTR_CLR_BOLD}'${ATTR_GREEN_BOLD}%s${ATTR_CLR_BOLD}'.\\\n" \
-               "${G_OPTION_TRN_LANGUAGE}")" ;
-    shift 2;
-    ;;
-  --trn-disable-sed)
-    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-        printf "${ATTR_YELLOW_BOLD}  DISABLING transcript's sed scripts.${ATTR_OFF}\\\n")" ;
-    G_OPTION_TRN_SED_SCRIPT_DISABLE=1 ; shift ;
-    ;;
-  --preset)
-    (( G_OPTION_PRESETS++ ));
-    configure_preset "$1" "$2" "${G_OPTION_PRESETS}" ;
-    shift 2;
-    ;;
-  -v|--verbose)
-    G_OPTION_VERBOSE='y' ; shift ;
-    ;;
-  -h|--help)
-    # TODO allow help arg to be an option in which detailed option help is displayed
-    case "$2" in
-     '')     my_usage 0 ;        ;;
-     'full') my_usage 0 "'$2'" ; ;;
-     *)      my_usage 1 "'$2'" ; ;;
-    esac
-    ;;
-  --)
-    shift ;
-    break ;
-    ;;
-  *)
-    echo -n "${ATTR_ERROR} fatal script error - option handler for " ;
-    echo    "'${ATTR_YELLOW_BOLD}$1${ATTR_OFF}' not written!!!" ;
-    echo    "${ATTR_YELLOW_BOLD}Terminating...${ATTR_OFF}" >&2 ; exit 5 ;
-    ;;
-  esac  # }
-done ;  # }
+
+    G_IN_VIDEO_FILE="$1" ; shift ;
+
+  else  # }{
+
+      #########################################################################
+      # (You can't specify ∕ change the video filename in a CLI aux script ☻.)
+      #
+    if [ $# -ne 0 ] ; then  # {
+      printf "${ATTR_ERROR} extra arguments∕filenames were specified (argc = %d)\n" $# ;
+      abort ${FUNCNAME[0]} ${LINENO};
+    fi  # }
+  fi  # }
+
+    ###########################################################################
+    # If we make it this far, “G_IN_VIDEO_FILE” is __always__ set, let's see
+    # if the user wants to probe its tracks ...
+    #
+  (( do_probe )) && probe_video "${G_IN_VIDEO_FILE}" ;
+
+  return 0 ;
+}
 
 
   #############################################################################
-  # Do the remaining input validation here
-  # FIXME :: this should also catch EXTRA arguments
+  #############################################################################
+  # Process any command line arguments ...
   #
-if [ $# -ne 1 ] ; then
-  echo "${ATTR_ERROR} no input filename was specified" ;
-  exit 2;
-fi
+my_getopt "$@" ;
 
-G_SCRIPT_RUN_DATE="$(${DATE} "${DATE_FORMAT}")" ; # Do this just ONCE per/run.
 
 check_and_build_directory '' "${G_VIDEO_OUT_DIR}" ;
 check_and_build_directory '' "${C_SUBTITLE_OUT_DIR}" ;
@@ -1250,8 +1324,6 @@ check_and_build_directory '' "${C_FONTS_DIR}" ;
 ###############################################################################
 ###############################################################################
 ###############################################################################
-
-G_IN_VIDEO_FILE="$1" ; shift ;
 
 G_IN_EXTENSION="${G_IN_VIDEO_FILE##*.}" ;
 G_IN_BASENAME="$(basename "${G_IN_VIDEO_FILE}" ".${G_IN_EXTENSION}")" ;
@@ -2932,7 +3004,10 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
 
     else  # }{
 
-      echo "${ATTR_YELLOW_BOLD}SRT SUBTITLE ALREADY PROCESSED$(tput sgr0) ..." ;
+      printf '  %s%s\n' \
+             "${ATTR_YELLOW_BOLD}SUBRIP SUBTITLE ALREADY PROCESSED " \
+             "TO SUBSTATION ALPHA ..." ;
+      tput sgr0 ;
 
       G_SUBTITLE_PATHNAME="${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass"
     fi  # }

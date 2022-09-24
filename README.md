@@ -105,7 +105,9 @@ die if anything is missing.
 - ffmpeg
 - mkvtoolnix
 - sed + pcre2 (the library)
-- coreutils -- basename, cut, head, et. al.
+- coreutils -- <code>basename</code>, <code>cut</code>, <code>head</code>,
+    <code>sort</code>, <code>tail</code>, <code>tee</code>, et. al.
+- util-linux - <code>getopt</code> (not bash's <code>getopts()</code>)
 - grep, egrep
 - bc - for (re-)calculating font sizes (<code>--srt-font-size</code>)
 - jq  (developed and tested with version 1.6)
