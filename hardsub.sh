@@ -50,7 +50,7 @@ fi
 # Copyright (C) 2022
 # License: GPL v2
 #
-# This file is part of pngass.sh
+# This file is part of hardsub.sh
 #
 # THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
 # WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
@@ -71,6 +71,8 @@ fi
 #
 # - for transcripts -- doesn't tell user that ASS file is already there
 #   (okay, but would like to see a message)
+#
+# - minor :: display the font's use-name when extracting the font file.
 #
 # ☻ It'd be really fun to add a title card to videos w/transcript file.  The
 #   user could could specify the background image and duration.  The duration
@@ -419,10 +421,52 @@ C_SED_SCRIPTS_DIR="${C_SUBTITLE_IN_DIR}" ; # ... for now use the same location
   #############################################################################
   # Tags which are used in transcript files: O, optional tag; R, required tag.
   #
-C_TRN_TAG_LANGUAGE='#L ' ;      # O, Language tag for spell correction
-C_TRN_TAG_TITLE='#T ' ;         # Video's title if different than filename
-C_TRN_TAG_CHANNEL='#U ' ;       # U-tube channel
-export C_TRN_TAG_LANGUAGE ;
+    ###########################################################################
+    # This identifies lines that define an ASS style to copy-through to the
+    # .ass subtitle file.  I haven't done a lot of testing on pruning these.
+    #
+    # IOWs, is a 'Style:'s definition defined by the triplet lines:
+    # “[V4+ Styles]”, “Format:”, and “Style:”?  Or after “[V4+ Styles]” and
+    # “Format:” are parsed, can additional styles be defined __after__ another
+    # "line descriptor" is read by simply adding its “Style:” line descriptor?
+    # Since “Format:” is used multiple times as a "keyword", it seems to be
+    # tightly coupled to the "ini section" preceding it.
+    #
+    # ∴ It looks like a “Style:” needs just the triplet described above, and
+    #   the “[Events]” section does NOT need to be repeated for “Dialogue:”.
+    #   But, just to be sure, you should include the “[Events]” section along
+    #   with its “Format:” to ensure that “Dialogue:” works on your system.
+    #
+    # Substation Alpha (V4+) provides quite a bit of ingenious flexibility.
+    # It's pretty easy to change some rendering characteristics about the text
+    # using the available style overrides, e.g.: \i, \b, \u, \fs, \fn, \c, etc.
+    # For example -->
+    #   Dialogue: 0,00:01:25.00,00:01:31.00,Default,,0,0,0,,Alaska's {\i1}long and broken{\i0} coastline ...
+    # will render the phrase “long and broken” in italics.
+    #
+    # \k displays the selection in the SecondaryColour for the specified
+    # duration (in hundredths of seconds) ({\k100}) before switching to
+    # the PrimaryColour of the “Dislogue:” stlye.
+    #
+    # If more complicated text "edits" are needed, defining a new “Style:”
+    # can be used instead.  This condenses a series of {\i1}{\b1} ... as a
+    # style name, for example -->
+    #   Dialogue: 0,00:01:25.00,00:01:31.00,Default,,0,0,0,,Alaska's {\rNew Style}long and broken{\r} coastline ...
+    # Things like this can easily be automated with an appropriate sed snippet
+    # in one of the transcript's sed scripts.
+    #
+    # I don't have any knowledge of how to get the “Picture:” event to render.
+    #   “This is a "picture" event, which means SSA will display the specified
+    #   .bmp, .jpg, .gif, .ico or .wmf graphic.”
+    #
+    # REF :: moodub.free.fr/video/ass-specs.doc
+    ###########################################################################
+    #
+C_TRN_TAG_ASS_SCRIPT='#S' ;
+C_TRN_TAG_LANGUAGE='#L' ;       # O, Language tag for spell correction
+#-- C_TRN_TAG_TITLE='#T ' ;     # Video's title if different than filename
+#-- C_TRN_TAG_CHANNEL='#U ' ;   # U-tube channel
+export C_TRN_TAG_ASS_SCRIPT C_TRN_TAG_LANGUAGE ;
 
   #############################################################################
   # Video filter setup area ...  Still rough around the edges.
@@ -1049,6 +1093,8 @@ initialize_variables ;
 my_getopt()
 {
   local do_probe=0 ;
+
+  G_OPTION_GLOBAL_MESSAGES='' ; # reset for each call to 'my_getopt()'
 
   HS_OPTIONS=`getopt -o dph::vc:f:yt:q: \
       --long help::,verbose,config:,fonts-dir:,copy-to:,quality:,\
@@ -1708,7 +1754,7 @@ apply_script_to_srt_subtitles() {
       # - Note that the necessary _replacement_ escapes are added by the MAIN
       #   script, i.e., the '&' character does not need to be and should NOT
       #   be escaped in the replacement part.
-      # - Because some libass directives are preceeded by a '\' character, e.g.
+      # - Because some libass directives are preceded by a '\' character, e.g.
       #   '{\pos(13,80)}'.  This makes using the '\' character a little tricky
       #   Consider the following sed script pair (from a converted SRT file):
       #
@@ -1739,7 +1785,7 @@ apply_script_to_srt_subtitles() {
 
       #########################################################################
       # Insane shell escape sequences - also, the sed '-e' ordering is
-      # important.  This is because some .ASS directives are preceeded by a
+      # important.  This is because some .ASS directives are preceded by a
       # '\', e.g. {\pos(13,80)}.  Note, regex captures are complicated to code
       # -- I ended up using '%%%' to represent the '\' character to simplify
       # the scripting.
@@ -1921,7 +1967,7 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
 
       #########################################################################
       # Insane shell escape sequences - also, the sed '-e' ordering is
-      # important.  This is because some .ASS directives are preceeded by a
+      # important.  This is because some .ASS directives are preceded by a
       # '\', e.g. {\pos(13,80)}.  Note, regex captures are complicated to code
       # -- I ended up using '%%%' to represent the '\' character to simplify
       # the scripting.
@@ -2204,6 +2250,23 @@ build_spell_correction_sed_script() {
 
 
 ###############################################################################
+# TODO: add a global sed script feature for a "group" of videos in a series.
+# This would probably be configured as a CLI option, or build the sed pathname
+# from the basename of the directory where the video is, and look for it in
+# the same location as the other sed scripts.
+#
+run_global_sed_script() {
+  local sed_script="$1" ; shift ;
+
+  if [ "${sed_script}" != '' ] ; then
+    ${SED} "--file=${sed_script}" ;
+  else
+    cat - ;
+  fi
+}
+
+
+###############################################################################
 #
 run_spell_check_sed_script() {
   local sed_script="$1" ; shift ;
@@ -2284,6 +2347,7 @@ write_a_subtitle_line() {
     # (of course, it depends on the complexity of the actual sed script)!
     #
   transcript_line="$(printf "%s" "${transcript_line}"                      \
+                   | run_global_sed_script ''                              \
                    | run_user_sed_script "${transcript_sed_script}"        \
                    | run_spell_check_sed_script "${dictionary_sed_script}")" ;
 
@@ -2404,7 +2468,7 @@ add_transcript_text_to_subtitle() {
     ###########################################################################
     # Walk through the transcript file:
     # - keep track of the line number in case there's an error with the line;
-    # - sed to remove any "magic" lines (#S, #L, #H, etc.);
+    # - sed to remove any "magic" lines (#S, #L, etc.);
     #   > a clever trick (discovered by accident) -->
     #     sed 's/^#[^#]*//' without the end anchor ('$') produces identical
     #     results to sed -e 's/^#[^#]*$//' -e 's/^##/#/'.
@@ -2600,8 +2664,8 @@ add_transcript_style_to_subtitle() {
     # Style: Default,Arial,16,...
     # printf '%s' 'Style: Default,Arial,16, ...
     #
-  ${GREP} '^#S' "${transcript_file_in}" \
-    | ${SED} -e 's/^#S[ ]*//'           \
+  ${GREP} "^${C_TRN_TAG_ASS_SCRIPT}" "${transcript_file_in}" \
+    | ${SED} -e "s/^${C_TRN_TAG_ASS_SCRIPT}[ ]*//"           \
     | while read text_line ; do  # {
 
       printf "%s\n" "${text_line}"         \
@@ -2781,7 +2845,8 @@ HERE_DOC
       # TODO We'll check the __FINAL__ generated subtitle file for duplicate styles, as
       # that is probably the most likely bug a user could introduce. TODO
       #
-    msg="$(${GREP} -c '^#S' "${transcript_file_in}" 2>&1)" ; RC=$? ;
+    msg="$(${GREP} -c "^${C_TRN_TAG_ASS_SCRIPT}" "${transcript_file_in}" 2>&1)" ;
+    RC=$? ;
     if   [ ${RC} -eq 0 ] ; then  # {
       if [ ${msg} -lt 5 ] ; then  # {
         echo 'WARNING -- too few Style: line were found ..?' ;
