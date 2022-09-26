@@ -464,9 +464,10 @@ C_SED_SCRIPTS_DIR="${C_SUBTITLE_IN_DIR}" ; # ... for now use the same location
     #
 C_TRN_TAG_ASS_SCRIPT='#S' ;
 C_TRN_TAG_LANGUAGE='#L' ;       # O, Language tag for spell correction
+C_TRN_TAG_EMBEDDED_CLI='#C' ;
 #-- C_TRN_TAG_TITLE='#T ' ;     # Video's title if different than filename
 #-- C_TRN_TAG_CHANNEL='#U ' ;   # U-tube channel
-export C_TRN_TAG_ASS_SCRIPT C_TRN_TAG_LANGUAGE ;
+export C_TRN_TAG_ASS_SCRIPT C_TRN_TAG_LANGUAGE C_TRN_TAG_EMBEDDED_CLI ;
 
   #############################################################################
   # Video filter setup area ...  Still rough around the edges.
@@ -681,6 +682,10 @@ configure_preset() {
 # the first call is the “Pedantic” test for the option, and the second call is
 # to validate the selected directory (redundant) or its default value.
 #
+# FIXME TODO Add an option to only "mkdir" the directory if required.
+#            this way we won't build a directory only to have it overridden
+#            by an embedded CLI.
+#
 check_and_build_directory() {
   local my_option="$1" ; shift ;
   local my_directory="$1" ; shift ;
@@ -707,7 +712,7 @@ check_and_build_directory() {
     fi  # }
 
       #########################################################################
-      # SUCCESS :: return (echo) the successfully built directory is required.
+      # SUCCESS :: return (echo) the successfully built directory as required.
       #
     [ "${my_option}" != '' ] && echo "${my_directory}" ;
     return 0;
@@ -1090,8 +1095,13 @@ initialize_variables ;
 # is an EMPTY string (''), then an "optional" argument was NOT provided.
 # I think this makes the command line easier to read and less error prone.
 #
-my_getopt()
-{
+# FIXME ::
+#  trn-is-music -- mostly a comsetic addition, see its description
+#  trn-no-words -- needed for non-English transcripts which do NOT have word
+#                  spacing (we can't count words, we'll have to count chars
+#                  using ‘wc -m’).
+#
+my_getopt() {
   local do_probe=0 ;
 
   G_OPTION_GLOBAL_MESSAGES='' ; # reset for each call to 'my_getopt()'
@@ -1111,6 +1121,7 @@ preset::,\
 out-dir::,\
 trn-word-time-ms::,\
 trn-is-music,\
+trn-no-words,\
 trn-text-margin::,\
 trn-font-primarycolor::,\
 trn-font-outlinecolor::,\
@@ -1354,12 +1365,33 @@ font-check:: \
 }
 
 
+###############################################################################
+# process_embedded_cli_options(in_video)
+#
+# Look for an embedded CLI in one of two places (in this order):
+# 1. The basename of the dirname of the video + ‘.cli’ with a “#C” line(s);
+#    OR
+# 2. The basename of the video + ‘.cli’ with a “#C” line(s).  This file will
+#    be in the ‘C_SUBTITLE_IN_DIR’ and shares functionality with a transcript.
+#
+# Let's start with 2. as that's the simplest to provide a use-case for.
+#
+# Case 1 is provided for batching a group of input videos.
+#
+process_embedded_cli_options() {
+  in_video="$1" ; shift ;
+
+# my_getopt "$@" ;
+}
+
+
   #############################################################################
   #############################################################################
   # Process any command line arguments ...
   #
 my_getopt "$@" ;
 
+process_embedded_cli_options "${G_IN_VIDEO_FILE}" ;
 
 check_and_build_directory '' "${G_VIDEO_OUT_DIR}" ;
 check_and_build_directory '' "${C_SUBTITLE_OUT_DIR}" ;
@@ -1407,7 +1439,6 @@ check_installed_tools() {
 
   { set +x ; } >/dev/null 2>&1
   tput sgr0 ;
-# WWWW
 }
 
 
@@ -2939,6 +2970,7 @@ printf "${ATTR_BLUE_BOLD}<< '" ;
 printf "${ATTR_GREEN_BOLD}%s" "${G_IN_VIDEO_FILE}"
 printf "${ATTR_BLUE_BOLD}' >>${ATTR_OFF} ...\n" ;
 
+
 echo -ne "${G_OPTION_MESSAGES}" ; # <sic>, couldn't printf this 'cause of '\n's
 echo -ne "${G_OPTION_GLOBAL_MESSAGES}" ;
 
@@ -3016,7 +3048,7 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
       G_TRN_SED_SCRIPT='' ;
     fi  # }
 
-    { set +x ; } >/dev/null 2>&1
+    { set +x ; } >/dev/null 2>&1 ;
     tput sgr0 ;
 
     C_SED_DICTIONARY_BASENAME="${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}" ;
