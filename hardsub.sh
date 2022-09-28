@@ -292,6 +292,7 @@ FFMPEG='ffmpeg -y -nostdin -hide_banner -loglevel info' ;
 MKVMERGE='/usr/bin/mkvmerge' ;
 MKVEXTRACT='/usr/bin/mkvextract' ;
 DOS2UNIX='/bin/dos2unix --force' ;
+PWD='/bin/pwd -L' ;
 FC_MATCH='/usr/bin/fc-match' ;
 FC_LIST='/usr/bin/fc-list' ;
 FC_SCAN='/usr/bin/fc-scan' ;
@@ -351,6 +352,7 @@ G_OPTION_NO_MODIFY_SRT='' ;     # for an SRT subtitle, don't apply any sed
                                 # this is set to 'y'.
                                 # This flag's use should be pretty rare since
                                 # ffmpeg's default conversion is pretty basic.
+G_ALLOW_EMBEDDED_OPTIONS=1 ;    # search for embedded options
 G_OPTION_NO_MODIFY_ASS='' ;     # TODO write_me + getopt
 G_OPTION_ASS_SCRIPT=''    ;     # TODO write_me + getopt
 G_OPTION_NO_FUZZY='' ;          # if set to 'y', then do't use 'agrep' to test
@@ -416,7 +418,9 @@ export G_HAVE_TOOL_ASPELL=1 ;   # = 1 if we have a working aspell
 
 G_VIDEO_OUT_DIR='OUT DIR' ;     # the re-encoded video's save location
 C_SUBTITLE_IN_DIR='IN SUBs' ;   # location for manually added subtitles
+
 C_SED_SCRIPTS_DIR="${C_SUBTITLE_IN_DIR}" ; # ... for now use the same location
+C_CLI_EMBEDDED_DIR="${C_SUBTITLE_IN_DIR}" ; # ... ? Do I need these 2 variables?
 
   #############################################################################
   # Tags which are used in transcript files: O, optional tag; R, required tag.
@@ -671,6 +675,40 @@ configure_preset() {
 
 
 ###############################################################################
+# check_directory(my_option, my_directory)
+#
+# We use this to check those CLI options which require a directcory pathname.
+#
+# If successful, we return the directory’s name.
+# DOES NOT return if there was an error.
+#
+check_directory() {
+  local my_option="$1" ; shift ;
+  local my_directory="$1" ; shift ;
+
+  ${DBG} echo "OPTION = '${my_option}', DIR = '${my_directory}'" >&2 ;
+
+  while : ; do  # {
+    if [ "${my_directory}" = '' ] ; then  # Pedantic, I know ...
+      echo "${ATTR_ERROR} '${my_option}' requires a directory path." >&2 ;
+      break ;
+    fi
+
+      #########################################################################
+      # SUCCESS :: return directory's name as required.
+      #
+    printf '%s' "${my_directory}" ;
+    return 0;
+  done ;  # }
+
+    ###########################################################################
+    # FAILURE :: exit; we've already printed an appropriate error message above
+    #
+  abort ${FUNCNAME[0]} ${LINENO};
+}
+
+
+###############################################################################
 # Validate and build a directory.
 #
 # If successful, we return the directory’s name if an OPTION was specified.
@@ -681,10 +719,6 @@ configure_preset() {
 # It *look* like we call this twice for options which require a directory, but
 # the first call is the “Pedantic” test for the option, and the second call is
 # to validate the selected directory (redundant) or its default value.
-#
-# FIXME TODO Add an option to only "mkdir" the directory if required.
-#            this way we won't build a directory only to have it overridden
-#            by an embedded CLI.
 #
 check_and_build_directory() {
   local my_option="$1" ; shift ;
@@ -846,6 +880,21 @@ apply_percentage() {
   abort ${FUNCNAME[0]} ${LINENO};
 }
 
+###############################################################################
+# add_option_directory_message(my_desc, olde_value, new_value)
+#
+add_option_directory_message() {
+  my_desc="$1" ; shift ;
+  olde_value="$1" ; shift ;
+  new_value="$1" ; shift ;
+
+  G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+    printf '%s' "${ATTR_YELLOW_BOLD}  SETTING ${my_desc} directory from " ;
+    printf '%s' "${ATTR_CLR_BOLD}“${ATTR_MAGENTA_BOLD}${olde_value}${ATTR_CLR_BOLD}” " ;
+    printf '%s' "to “${ATTR_GREEN_BOLD}${new_value}" ;
+    printf "${ATTR_CLR_BOLD}”${ATTR_YELLOW_BOLD}.${ATTR_OFF}\\\n")" ;
+}
+
 
 ###############################################################################
 # build_colour(value, prefix_str, fb_char)
@@ -990,7 +1039,7 @@ get_option_string() {
 
   while : ; do  # {
     if [ "${in_string}" = '' ] ; then  #  { Pedantic, I know ...
-      echo >&2 "${ATTR_ERROR} '${my_option}' requires an string." ;
+      echo >&2 "${ATTR_ERROR} '${my_option}' requires a string." ;
       (( err_lineno = $LINENO - 1 ));
       break ;
     fi  # }
@@ -1042,15 +1091,18 @@ probe_video() {
 
 ###############################################################################
 # If not disabled, then echo out any other command line options which affect
-# the video's encoding (e.g., changing the font face and/or size).
+# the video's encoding (e.g., changing the font face and/or size) for the
+# video's metadata comment.
 #
 add_other_commandline_options() {
-  echo -n '' ;
+
+  printf '' ;
   #echo '-srt-font-size-percent=130%' ;
 }
 
 
 ###############################################################################
+# initialize_variables()
 #
 initialize_variables() {
 
@@ -1075,13 +1127,11 @@ if [ $# -eq 0 ] ; then
   my_usage 2; # FIXME -- is this still needed?
 fi
 
-initialize_variables ;
-
 
 ###############################################################################
 ###############################################################################
 ###############################################################################
-# my_getopt()
+# check_options()
 #
 # Setup and use getopt() for the command line arguments.
 # Stuff the parsed options back into the arg[] list (quotes are essential)...
@@ -1101,12 +1151,12 @@ initialize_variables ;
 #                  spacing (we can't count words, we'll have to count chars
 #                  using ‘wc -m’).
 #
-my_getopt() {
+check_options() {
   local do_probe=0 ;
 
-  G_OPTION_GLOBAL_MESSAGES='' ; # reset for each call to 'my_getopt()'
+##?? G_OPTION_GLOBAL_MESSAGES='' ; # reset for each call to 'check_options()'
 
-  HS_OPTIONS=`getopt -o dph::vc:f:yt:q: \
+  HS_OPTIONS=`getopt -o dpt::h::vc:f:yq: \
       --long help::,verbose,config:,fonts-dir:,copy-to:,quality:,\
 dry-run,\
 debug,\
@@ -1117,8 +1167,12 @@ no-metadata,\
 no-modify-srt,\
 no-fuzzy,\
 probe,\
+title::,\
 preset::,\
 out-dir::,\
+video-out-dir::,\
+subs-out-dir::,\
+subs-in-dir::,\
 trn-word-time-ms::,\
 trn-is-music,\
 trn-no-words,\
@@ -1180,8 +1234,22 @@ font-check:: \
     --no-fuzzy)
       G_OPTION_NO_FUZZY='y' ; shift ;
       ;;
-    --out-dir)
-      G_VIDEO_OUT_DIR="$(check_and_build_directory "$1" "$2")" ;
+    --out-dir|--video-out-dir)
+      new_value="$(check_directory "$1" "$2")" ;
+      add_option_directory_message 'video’s output' "${G_VIDEO_OUT_DIR}" "${new_value}" ;
+      G_VIDEO_OUT_DIR="${new_value}" ;
+      shift 2;
+      ;;
+    --subs-out-dir)
+      new_value="$(check_directory "$1" "$2")" ;
+      add_option_directory_message 'subtitle save' "${C_SUBTITLE_OUT_DIR}" "${new_value}" ;
+      C_SUBTITLE_OUT_DIR="${new_value}" ;
+      shift 2;
+      ;;
+    --subs-in-dir)
+      new_value="$(check_directory "$1" "$2")" ;
+      add_option_directory_message 'support∕subtitle' "${C_SUBTITLE_IN_DIR}" "${new_value}" ;
+      C_SUBTITLE_IN_DIR="${new_value}" ;
       shift 2;
       ;;
     --font-check)
@@ -1307,6 +1375,14 @@ font-check:: \
       configure_preset "$1" "$2" "${G_OPTION_PRESETS}" ;
       shift 2;
       ;;
+    --title|-t)
+      G_OPTION_TITLE="$(get_option_string "$1" "$2")" ;
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          printf "${ATTR_YELLOW_BOLD}  SETTING video’s metadata title to " ;
+          printf "${ATTR_CLR_BOLD}'${ATTR_GREEN_BOLD}%s${ATTR_CLR_BOLD}'.\\\n" \
+                 "$2")" ;
+      shift 2;
+      ;;
     -v|--verbose)
       G_OPTION_VERBOSE='y' ; shift ;
       ;;
@@ -1366,7 +1442,7 @@ font-check:: \
 
 
 ###############################################################################
-# process_embedded_cli_options(in_video)
+# check_embedded_options(in_video)
 #
 # Look for an embedded CLI in one of two places (in this order):
 # 1. The basename of the dirname of the video + ‘.cli’ with a “#C” line(s);
@@ -1378,33 +1454,36 @@ font-check:: \
 #
 # Case 1 is provided for batching a group of input videos.
 #
-process_embedded_cli_options() {
+check_embedded_options() {
   in_video="$1" ; shift ;
 
-# my_getopt "$@" ;
+  local in_video_dir="$(dirname "${in_video}")" ;
+  local in_video_pwd="$(cd -- "${in_video_dir}/" && /bin/pwd -L)" ;
+  local cli_file="$(basename "${in_video_pwd}").cli" ;
+
+  if [ -s "${cli_file}" -a -r "${cli_file}" ] ; then  # {
+
+    local cli_options='' ;
+    ${GREP} "^${C_TRN_TAG_EMBEDDED_CLI}[ ]" "${cli_file}" \
+      | sed -e "s/^${C_TRN_TAG_EMBEDDED_CLI}[ ]//"        \
+      | while read cli_line ; do
+ 
+         cli_options="${cli_options} ${cli_line}" ;
+      done
+      printf '%s\n' "${cli_options}" ;
+
+    if [ "${cli_options}" != '' ] ; then  # {
+      eval set -- "${cli_options}" ;
+      check_options "$@" ;
+    fi  # }
+
+  elif false ; then  # }{
+    : # TODO :: check in 'C_SUBTITLE_IN_DIR'
+  fi  # }
+
+  { set +x ; } >/dev/null 2>&1
+  tput sgr0 ;
 }
-
-
-  #############################################################################
-  #############################################################################
-  # Process any command line arguments ...
-  #
-my_getopt "$@" ;
-
-process_embedded_cli_options "${G_IN_VIDEO_FILE}" ;
-
-check_and_build_directory '' "${G_VIDEO_OUT_DIR}" ;
-check_and_build_directory '' "${C_SUBTITLE_OUT_DIR}" ;
-check_and_build_directory '' "${C_SUBTITLE_IN_DIR}" ;
-
-check_and_build_directory '' "${C_FONTS_DIR}" ;
-
-###############################################################################
-###############################################################################
-###############################################################################
-
-G_IN_EXTENSION="${G_IN_VIDEO_FILE##*.}" ;
-G_IN_BASENAME="$(basename "${G_IN_VIDEO_FILE}" ".${G_IN_EXTENSION}")" ;
 
 
 ###############################################################################
@@ -1425,7 +1504,8 @@ check_installed_tools() {
     MSG="$(printf '%s' "${G_OPTION_TRN_LANGUAGE}" | ${ASPELL} 2>&1)" ;
 
     if [ "${MSG}" = "${G_OPTION_TRN_LANGUAGE}" ] ; then  # {
-      MSG="${ATTR_CLR_BOLD}The word ${ATTR_MAGENTA_BOLD}'${G_OPTION_TRN_LANGUAGE}'${ATTR_CLR_BOLD} was NOT found by '${cmd_base}'."
+      MSG="${ATTR_CLR_BOLD}The word ${ATTR_MAGENTA_BOLD}'${G_OPTION_TRN_LANGUAGE}'" ;
+      MSG="${MSG}${ATTR_CLR_BOLD} was NOT found by '${cmd_base}'." ;
       printf "  ${ATTR_NOTE} ${ATTR_CLR_BOLD}%s\n" "${MSG}" ;
       printf "         ${ATTR_YELLOW}%s\n" \
              "Spell and auto correction of the transcript may NOT work as expected." ;
@@ -1477,8 +1557,8 @@ get_video_title() {
   local out_title='' ; # The default if 'Title' IS set in the video
 
   if [ "${in_title}" != '' ] ; then  # {
-      # The title is explicitly set by the user
-    out_title="${in_title}" ;
+
+    out_title="${in_title}" ; # The title is explicitly set by the user
 
   else  # }{
     local title_in_video="$(${EXIFTOOL} "${in_filename}" \
@@ -1530,7 +1610,8 @@ get_video_title() {
   fi  # }
 
   #############################################################################
-  # Ensure that any single quotes are escaped.  FIXME should be done elsewhere.
+  # Ensure that any single quotes are escaped.
+  # FIXME :: should this  apostrophe fix be done elsewhere?
   ## 'title=The Byrd'"'"'s - Turn! Turn! Turn! (2nafish)'
   #
   echo "$(echo "${out_title}" \
@@ -2537,7 +2618,8 @@ add_transcript_text_to_subtitle() {
       (( transcript_lineno++ )) ;
 
       if [ "${G_OPTION_DEBUG}" = 'y' ] ; then  # {
-        printf '%s\n' "${current_line}" >> "${transcript_file_in%.txt}.raw.txt" ;
+        # TODO :: make this go to a specified DEBUG directory.
+        printf '%s\n' "${current_line}" >> "${transcript_file_in%.txt}.raw" ;
       fi  # }
 
       if [ ${my_state} -eq 0 ] ; then  # { FIXME - this logic is NOT quite right ??
@@ -2688,6 +2770,9 @@ add_transcript_style_to_subtitle() {
   local style_in='' ;
 
   local rc=0 ;
+
+    ###########################################################################
+    # TODO :: Should I look for other tags and warn that they're being IGNORED?
 
     ###########################################################################
     # Copy through the embedded style and check if fontconfig knows the font¹.
@@ -2956,24 +3041,38 @@ HERE_DOC
 ###############################################################################
 # main();
 #
+  #############################################################################
+  #############################################################################
+  # Initialize variable and process any command line arguments ...
+  #
+initialize_variables ;
+
+check_options "$@" ;
+
+(( G_ALLOW_EMBEDDED_OPTIONS )) && check_embedded_options "${G_IN_VIDEO_FILE}" ;
+
 if ! [ -s "${G_IN_VIDEO_FILE}" ] ; then
-# printf "${ATTR_BLUE_BOLD}<< '" ;
-# printf "${ATTR_GREEN_BOLD}%s" "${G_IN_VIDEO_FILE}"
-# printf "${ATTR_BLUE_BOLD}' >>${ATTR_OFF} ...\n" ;
   printf "${ATTR_ERROR} ${ATTR_BOLD}‘${ATTR_YELLOW_BOLD}%s${ATTR_CLR_BOLD}’\n" \
          "${G_IN_VIDEO_FILE}" ;
   printf "        ${ATTR_YELLOW_BOLD}Is not there or is an EMPTY file.${ATTR_OFF}\n"
   exit 3 ;
 fi
 
+G_IN_EXTENSION="${G_IN_VIDEO_FILE##*.}" ;
+G_IN_BASENAME="$(basename "${G_IN_VIDEO_FILE}" ".${G_IN_EXTENSION}")" ;
+
 printf "${ATTR_BLUE_BOLD}<< '" ;
 printf "${ATTR_GREEN_BOLD}%s" "${G_IN_VIDEO_FILE}"
 printf "${ATTR_BLUE_BOLD}' >>${ATTR_OFF} ...\n" ;
 
-
 echo -ne "${G_OPTION_MESSAGES}" ; # <sic>, couldn't printf this 'cause of '\n's
 echo -ne "${G_OPTION_GLOBAL_MESSAGES}" ;
 
+check_and_build_directory '' "${G_VIDEO_OUT_DIR}" ;
+check_and_build_directory '' "${C_SUBTITLE_OUT_DIR}" ;
+check_and_build_directory '' "${C_SUBTITLE_IN_DIR}" ;
+
+check_and_build_directory '' "${C_FONTS_DIR}" ;
 
   #############################################################################
   # A little hack to speed up testing / development and save temporary files.
@@ -3155,6 +3254,8 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
     #   4 'subtitles' 'S_TEXT/ASS' 'Without Effect' 'eng'
     #   2 'subtitles' 'S_TEXT/UTF8' null 'eng'
 
+    #   2 'subtitles' 'S_TEXT/ASS' 'English subs' 'eng'
+
     # so let's see if there are any font
     # attachment(s) in the video.  If there are, then extract those fonts to
     # the fonts' directory (in 'C_FONTS_DIR') to provide visibility to ffmpeg.
@@ -3162,14 +3263,31 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
 
   else  # }{
 
-    SUBTITLE_TRACK="$(${MKVMERGE} -i -F json "${G_IN_VIDEO_FILE}" \
+    if false ; then  # {
+      : ; # We'll replace this 'false' with a regex variable from the CLI
+          # The variable can be one of three track identifiers:
+          # - an __absolute__ track number;
+          # - the regex pattern that matches the desired track
+          #   (use --probe to select a string to build a pattern against);
+          # - 'first' or 'last'
+          # This would "replace" the first GREP (below) and "catch" the
+          # case where the video stream may be specified as the "subtitle"
+          # track.  The default would be 'first'.
+          #
+          # This would __only__ select the track, not the subtitle TYPE.
+          #
+          # This should be a SUBTITLE_TRACK="$(f(G_IN_VIDEO_FILE, pattern))"
+          # with using the same “RC -eq 0” convention for success.
+    else  # }{
+      SUBTITLE_TRACK="$(${MKVMERGE} -i -F json "${G_IN_VIDEO_FILE}" \
         | jq '.tracks[]' \
         | jq -r '[.id, .type, .properties.codec_id, .properties.track_name, .properties.language]|@sh' \
         | ${GREP} "'subtitles' 'S_TEXT/" \
         | ${HEAD} -1 \
         | ${GREP} "'subtitles' 'S_TEXT/")" ; RC=$? ;
+    fi  # }
 
-    if [ ${RC} -eq 0 ] ; then  # { OKAY  HERE-HERE  YYYY
+    if [ ${RC} -eq 0 ] ; then  # { If we got a track, determine its TYPE.
 
       if ( echo "${SUBTITLE_TRACK}" | ${GREP} -q "'subtitles' 'S_TEXT/ASS'" ) ; then  # {
         echo "${ATTR_YELLOW_BOLD}  SUBSTATION ALPHA SUBTITLE FOUND IN VIDEO$(tput sgr0) ..." ;
