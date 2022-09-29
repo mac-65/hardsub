@@ -1,6 +1,6 @@
-# hardsub.sh
+# 🇭 🇦 🇷 🇩 🇸 🇺 🇧🔹🇸 🇭
 
-This is a simple command line shell script to hardsub
+This is a simple command line <code>bash</code> shell script to hardsub
 a subtitle track onto a video.
 
 It is being developed under Fedora 34 linux, and should be portable to other
