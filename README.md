@@ -6,8 +6,25 @@ a subtitle track onto a video.
 It is being developed under Fedora 34 linux, and should be portable to other
 linux distros, Apple, and possibly Windows with the proper support toolbox.
 
-This script is buggy, not well documented (yet), and under active development --
-use at your own risk.
+This script is buggy, not well documented (yet), and under active development,
+and most importantly, a hobby endeavor for me -- use at your own risk.
+
+<details>
+<summary>License - GPL v2</summary>
+
+<br>Copyright (C) 2022<br>
+<br>
+This file is part of hardsub.sh<br>
+<br>
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES<br>
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF<br>
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR<br>
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES<br>
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN<br>
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF<br>
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+</details>
 
 #### Rational
 I want to watch some media on my olde Samsung TV.
@@ -19,7 +36,7 @@ The script is meant to run as simply as possible without setting a lot of
 command line options to get anything to work.  For most use cases, no options
 or very few options are needed.  The idea is that this script can be used in
 a "batch" mode with many different types of source videos to produce a
-reasonable batch of output files in a unified video container.
+reasonable batch of output files in a unified video container, e.g. <code>MP4</code>.
 I'm going for a *plug-n-play* type of application.
 
 The script is 100% <code>/bin/bash</code> with lots of help from additional
