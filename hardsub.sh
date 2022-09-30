@@ -182,6 +182,8 @@ export ATTR_CYAN_BOLD="${ATTR_CYAN}${ATTR_BOLD}" ;
 export ATTR_BROWN="${ATTR_OFF}`tput setaf 94`" ;
 export ATTR_BROWN_BOLD="${ATTR_BROWN}${ATTR_BOLD}" ;
 export ATTR_OLIVE_BOLD="`tput setaf 64`${ATTR_BOLD}" ;
+export ATTR_ORANGE_BOLD="`tput setaf 208`${ATTR_BOLD}" ;
+export ATTR_LTBLUE_BOLD="`tput setaf 33`${ATTR_BOLD}" ;
 OPEN_TIC='‘' ;
 export ATTR_OPEN_TIC="${ATTR_CLR_BOLD}${OPEN_TIC}" ;
 CLOSE_TIC='’' ;
@@ -193,6 +195,9 @@ export ATTR_ERROR="${ATTR_RED_BOLD}ERROR -${ATTR_OFF}" ;
 export ATTR_NOTE="${ATTR_OFF}`tput setaf 11`NOTE -${ATTR_OFF}";
 export ATTR_TODO="${ATTR_OFF}`tput setaf 11; tput blink`TODO -${ATTR_OFF}";
 export ATTR_TOOL="${ATTR_GREEN_BOLD}" ;
+
+export ATTR_SETTING="`tput bold; tput setaf 184`SETTING" ;
+export ATTR_DISABLE="`tput setaf 172`DISABLING" ;
 
 HS1_CHARACTERS_QUOTES='‘’∕“”…' ;
 
@@ -285,6 +290,7 @@ trap 'exit_handler' EXIT ;
 #                 with 'libtre' and can be optionally installed; other distros
 #                 may require building from source.
 # - aspell      - used to build auto correct scripts for transcript files
+# - (x264)      - for info on configuration of some ffmpeg video options
 #
 C_SCRIPT_NAME="`basename \"$0\"`" ;
 DBG='' ;
@@ -356,6 +362,7 @@ G_OPTION_NO_MODIFY_SRT='' ;     # for an SRT subtitle, don't apply any sed
 G_ALLOW_EMBEDDED_OPTIONS=1 ;    # search for embedded options
 G_OPTION_NO_MODIFY_ASS='' ;     # TODO write_me + getopt
 G_OPTION_ASS_SCRIPT=''    ;     # TODO write_me + getopt
+G_OPTION_FFMPEG_TUNE='film' ;   # default for ffmpeg's -tune option
 G_OPTION_SUBTITLE_TRACK='first' ; # This is the default subtitle track to burn
 G_OPTION_SUBTITLE_TRACK_TYPE=0; # (tightly coupled w/G_OPTION_SUBTITLE_TRACK)
 G_OPTION_NO_FUZZY='' ;          # if set to 'y', then do't use 'agrep' to test
@@ -371,7 +378,7 @@ G_OPTION_NO_METADATA='' ;       # Do NOT add any metadata in the re-encoding
                                 # NOTE :: this implies '--no-comment'.
 G_OPTION_NO_COMMENT='' ;        # Do NOT write a '-metadata comment='.  Other
                                 # metadata will be written if appropriate.
-G_OPTION_PRESETS=0 ;            # Number of preset selected on commandline.
+G_OPTION_PRESETS=0 ;            # Number of preset selected on command line.
 
 G_OPTION_SRT_FONT_SIZE=39 ;     # The Default font size for SRT subtitles
 G_OPTION_SRT_DEFAULT_FONT_NAME='NimbusRoman-Regular' ; # The font for SubRip subtitles
@@ -629,6 +636,8 @@ my_usage() {
 # apply to a specific playback device.  Examples might include always scaling
 # the video to the device's screen size, or other re-encoding attributes.
 #
+# FIXME :: need a G_OPTION_MESSAGES message for the preset
+#
 configure_preset() {
   local my_option="$1" ; shift ;
   local my_preset="$1" ; shift ;
@@ -661,6 +670,10 @@ configure_preset() {
         # like a ':' in the filename breaks the copy (no useful error message).
         #
       G_ZTE_FIX_FILENAMES=1 ; # TODO :: A marker for future improvement(s).
+      ;;
+    Samsung|1920)
+      G_POST_VIDEO_FILTER='' ;
+      G_PRE_VIDEO_FILTER='scale=1920:-1' ;
       ;;
     *)
       echo "${ATTR_ERROR} unrecognized preset='${my_preset}'" ;
@@ -890,7 +903,7 @@ add_option_directory_message() {
   new_value="$1" ; shift ;
 
   G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-    printf '%s' "${ATTR_YELLOW_BOLD}  SETTING ${my_desc} directory from " ;
+    printf '%s' "  ${ATTR_SETTING} ${my_desc} directory from " ;
     printf '%s' "${ATTR_CLR_BOLD}“${ATTR_MAGENTA_BOLD}${olde_value}${ATTR_CLR_BOLD}” " ;
     printf '%s' "to “${ATTR_GREEN_BOLD}${new_value}" ;
     printf "${ATTR_CLR_BOLD}”${ATTR_YELLOW_BOLD}.${ATTR_OFF}\\\n")" ;
@@ -1176,7 +1189,10 @@ fi
 ###############################################################################
 ###############################################################################
 ###############################################################################
-# check_options()
+# check_getopt()
+#
+# TODO :: add a "special" option to indicate that this call is for embedded
+#         options (something that's not easily typed on the keyboard).
 #
 # Setup and use getopt() for the command line arguments.
 # Stuff the parsed options back into the arg[] list (quotes are essential)...
@@ -1195,11 +1211,15 @@ fi
 #  trn-no-words -- needed for non-English transcripts which do NOT have word
 #                  spacing (we can't count words, we'll have to count chars
 #                  using ‘wc -m’).
+# TODO :: IDEA ::
+#  Setting an option which requires an argument as "--option=?" will print a
+#  help block about the option and force G_OPTION_DRY_RUN=2 to exit the script
+#  immedaitely after displaying the help (multiple options can be done at once).
 #
-check_options() {
+check_getopt() {
   local do_probe=0 ;
 
-##?? G_OPTION_GLOBAL_MESSAGES='' ; # reset for each call to 'check_options()'
+##?? G_OPTION_GLOBAL_MESSAGES='' ; # reset for each call to 'check_getopt()'
 
   HS_OPTIONS=`getopt -o dpt::h::vc:f:yq: \
       --long help::,verbose,config:,fonts-dir:,copy-to:,quality:,\
@@ -1214,6 +1234,7 @@ no-fuzzy,\
 probe,\
 probe-only,\
 title::,\
+tune::,\
 preset::,\
 out-dir::,\
 video-out-dir::,\
@@ -1265,7 +1286,7 @@ font-check:: \
       ;;
     -d|--dry-run)
       G_OPTION_GLOBAL_MESSAGES="${G_OPTION_GLOBAL_MESSAGES}$(\
-          printf "  ${ATTR_YELLOW_BOLD}DRY RUN - ${ATTR_OFF}%s\\\n" \
+          printf "  ${ATTR_LTBLUE_BOLD}DRY RUN - ${ATTR_CLR_BOLD}%s\\\n" \
                  'ffmpeg will NOT be run after the video’s preprocessing')" ;
       G_OPTION_DRY_RUN='y' ; shift ;
       ;;
@@ -1332,7 +1353,7 @@ font-check:: \
     --srt-font-size-percent)
       olde_value="${G_OPTION_SRT_FONT_SIZE}" ;
       G_OPTION_SRT_FONT_SIZE="$(apply_percentage "$1" "$2" "${G_OPTION_SRT_FONT_SIZE}" 1)" ;
-      echo -n "${ATTR_YELLOW_BOLD}  SETTING SubRip font size ${ATTR_CLR_BOLD}" ;
+      echo -n "  ${ATTR_SETTING} SubRip font size ${ATTR_CLR_BOLD}" ;
       echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_SRT_FONT_SIZE}" ;
       echo    "${ATTR_CLR_BOLD} ($2%).${ATTR_OFF}" ;
         # TODO :: add a note about this to the comments IF the video really has SubRip subtitles
@@ -1343,7 +1364,7 @@ font-check:: \
       G_OPTION_SUBTITLE_TRACK="$(get_option_subtitle_track "$1" "$2")" ; RC=$? ;
       G_OPTION_SUBTITLE_TRACK_TYPE=${RC} ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-          echo -n "${ATTR_YELLOW_BOLD}  SETTING subtitle track filter ${ATTR_CLR_BOLD}" ;
+          echo -n "  ${ATTR_SETTING} subtitle track filter ${ATTR_CLR_BOLD}" ;
           echo -n "(from “${ATTR_OLIVE_BOLD}${olde_value}${ATTR_YELLOW_BOLD}”)"
           echo -n " to “${ATTR_GREEN_BOLD}${G_OPTION_SUBTITLE_TRACK}" ;
           printf    "${ATTR_YELLOW_BOLD}”${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
@@ -1353,7 +1374,7 @@ font-check:: \
       olde_value="${G_OPTION_TRN_MARGIN}" ;
       G_OPTION_TRN_MARGIN="$(get_option_integer "$1" "$2" 25 200)" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-          echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's left and right margin ${ATTR_CLR_BOLD}" ;
+          echo -n "  ${ATTR_SETTING} transcript’s left and right margin ${ATTR_CLR_BOLD}" ;
           echo -n "(from ${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_MARGIN}" ;
           printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
       shift 2;
@@ -1362,7 +1383,7 @@ font-check:: \
       olde_value="${G_OPTION_TRN_PRIMARYCOLOR}" ;
       G_OPTION_TRN_PRIMARYCOLOR="$(get_color_spec "$1" "$2" "${olde_value}")" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-          echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's PrimaryColor ${ATTR_CLR_BOLD}" ;
+          echo -n "  ${ATTR_SETTING} transcript’s PrimaryColor ${ATTR_CLR_BOLD}" ;
           echo -n "(from ${olde_value}$(build_colour ${olde_value} ', ' "${FB_CHAR}"))${ATTR_OFF} "
           echo -n "${ATTR_CLR_BOLD}to ${G_OPTION_TRN_PRIMARYCOLOR}" ;
           echo -n "$(build_colour $2 ', ' "${FB_CHAR}")" ;
@@ -1373,7 +1394,7 @@ font-check:: \
       olde_value="${G_OPTION_TRN_OUTLINECOLOR}" ;
       G_OPTION_TRN_OUTLINECOLOR="$(get_color_spec "$1" "$2" "${olde_value}")" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-          echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's OutlineColor ${ATTR_CLR_BOLD}" ;
+          echo -n "  ${ATTR_SETTING} transcript’s OutlineColor ${ATTR_CLR_BOLD}" ;
           echo -n "(from ${olde_value}$(build_colour ${olde_value} ', ' "${FB_CHAR}"))${ATTR_OFF} "
           echo -n "${ATTR_CLR_BOLD}to ${G_OPTION_TRN_OUTLINECOLOR}" ;
           echo -n "$(build_colour $2 ', ' "${FB_CHAR}")" ;
@@ -1384,7 +1405,7 @@ font-check:: \
       olde_value="${G_OPTION_TRN_OUTLINE_WEIGHT}" ;
       G_OPTION_TRN_OUTLINE_WEIGHT="$(get_decimal_number "$1" "$2" '0.0' '25.0')" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-          echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's outline weight ${ATTR_CLR_BOLD}" ;
+          echo -n "  ${ATTR_SETTING} transcript’s outline weight ${ATTR_CLR_BOLD}" ;
           echo -n "(from ${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}$2" ;
           printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
       shift 2;
@@ -1393,7 +1414,7 @@ font-check:: \
       olde_value="${G_OPTION_TRN_FONT_SIZE}" ;
       G_OPTION_TRN_FONT_SIZE="$(apply_percentage "$1" "$2" "${olde_value}" 1)" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-          echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's font size ${ATTR_CLR_BOLD}" ;
+          echo -n "  ${ATTR_SETTING} transcript’s font size ${ATTR_CLR_BOLD}" ;
           echo -n "(from ${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_FONT_SIZE}" ;
           printf    "${ATTR_CLR_BOLD} ($2%%).${ATTR_OFF}\\\n")" ;
         # TODO :: add a note about this to the comments IF the video really has a transcript
@@ -1403,7 +1424,7 @@ font-check:: \
       olde_value="${G_OPTION_TRN_WORD_TIME}" ;
       G_OPTION_TRN_WORD_TIME="$(get_option_integer "$1" "$2" ${G_TRN_WORD_TIME_MIN})" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-          echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's word time ${ATTR_CLR_BOLD}" ;
+          echo -n "  ${ATTR_SETTING} transcript’s word time ${ATTR_CLR_BOLD}" ;
           echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_WORD_TIME}" ;
           printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
       shift 2;
@@ -1412,7 +1433,7 @@ font-check:: \
       olde_value="${G_OPTION_TRN_WC_THRESHOLD}" ;
       G_OPTION_TRN_WC_THRESHOLD="$(get_option_integer "$1" "$2" 2 40)" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-          echo -n "${ATTR_YELLOW_BOLD}  SETTING transcript's word count threshold "
+          echo -n "  ${ATTR_SETTING} transcript’s word count threshold "
           echo -n "for End time recalculation${ATTR_CLR_BOLD} " ;
           echo -n "(${olde_value})${ATTR_OFF} to " ;
           printf "${ATTR_GREEN_BOLD}%d${ATTR_CLR_BOLD} words.${ATTR_OFF}\\\n"\
@@ -1422,14 +1443,14 @@ font-check:: \
     --trn-language)
       G_OPTION_TRN_LANGUAGE="$(get_option_string "$1" "$2")" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-          printf "${ATTR_YELLOW_BOLD}  SETTING transcript's spell check language to " ;
+          printf "  ${ATTR_SETTING} transcript’s spell check language to " ;
           printf "${ATTR_CLR_BOLD}'${ATTR_GREEN_BOLD}%s${ATTR_CLR_BOLD}'.\\\n" \
                  "${G_OPTION_TRN_LANGUAGE}")" ;
       shift 2;
       ;;
     --trn-disable-sed)
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-          printf "${ATTR_YELLOW_BOLD}  DISABLING transcript's sed scripts.${ATTR_OFF}\\\n")" ;
+          printf "  ${ATTR_DISABLE} transcript’s sed scripts.${ATTR_OFF}\\\n")" ;
       G_OPTION_TRN_SED_SCRIPT_DISABLE=1 ; shift ;
       ;;
     --preset)
@@ -1440,7 +1461,15 @@ font-check:: \
     --title|-t)
       G_OPTION_TITLE="$(get_option_string "$1" "$2")" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-          printf "${ATTR_YELLOW_BOLD}  SETTING video’s metadata title to " ;
+          printf "  ${ATTR_SETTING} video’s metadata title to " ;
+          printf "${ATTR_CLR_BOLD}'${ATTR_GREEN_BOLD}%s${ATTR_CLR_BOLD}'.\\\n" \
+                 "$2")" ;
+      shift 2;
+      ;;
+    --tune)
+      G_OPTION_FFMPEG_TUNE="$(get_option_string "$1" "$2")" ;
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          printf "  ${ATTR_SETTING} ffmpeg’s -tune to " ;
           printf "${ATTR_CLR_BOLD}'${ATTR_GREEN_BOLD}%s${ATTR_CLR_BOLD}'.\\\n" \
                  "$2")" ;
       shift 2;
@@ -1528,6 +1557,10 @@ check_embedded_options() {
 
   if [ -s "${cli_file}" -a -r "${cli_file}" ] ; then  # {
 
+    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+      printf "  ${ATTR_ORANGE_BOLD}FOUND -${ATTR_CLR_BOLD} embedded CLI file " ;
+      printf "'${ATTR_YELLOW}%s${ATTR_CLR_BOLD}' ...\\\n" "${cli_file}")" ;
+
     local cli_options='' ;
     ${GREP} "^${C_TRN_TAG_EMBEDDED_CLI}[ ]" "${cli_file}" \
       | sed -e "s/^${C_TRN_TAG_EMBEDDED_CLI}[ ]//"        \
@@ -1539,7 +1572,7 @@ check_embedded_options() {
 
     if [ "${cli_options}" != '' ] ; then  # {
       eval set -- "${cli_options}" ;
-      check_options "$@" ;
+      check_getopt "$@" ;
     fi  # }
 
   elif false ; then  # }{
@@ -3112,7 +3145,7 @@ HERE_DOC
   #
 initialize_variables ;
 
-check_options "$@" ;
+check_getopt "$@" ;
 
 # FIXME :: if there's a embedded CLI file, indicate that we're ignoring it.
 (( G_ALLOW_EMBEDDED_OPTIONS )) && check_embedded_options "${G_IN_VIDEO_FILE}" ;
@@ -3208,7 +3241,7 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
         printf "'${ATTR_YELLOW}%s${ATTR_CLR_BOLD}'\n" "${G_TRN_SED_SCRIPT}" ;
         G_TRN_SED_SCRIPT='' ;
       else  # }{
-        printf "  ${ATTR_YELLOW_BOLD}FOUND -${ATTR_CLR_BOLD} transcript sed script " ;
+        printf "  ${ATTR_ORANGE_BOLD}FOUND -${ATTR_CLR_BOLD} transcript sed script " ;
         printf "'${ATTR_YELLOW}%s${ATTR_CLR_BOLD}' ...\n" "${G_TRN_SED_SCRIPT}" ;
       fi  # }
     else  # }{
@@ -3546,7 +3579,7 @@ if [ ! -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" \
               -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} \
               -c:v libx264 -preset ${C_FFMPEG_PRESET} \
               -crf ${C_FFMPEG_CRF} \
-              -tune film -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} \
+              -tune ${G_OPTION_FFMPEG_TUNE} -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} \
               "$@" \
               "file:${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ;
     { RC=$? ; set +x ; } >/dev/null 2>&1
@@ -3565,7 +3598,7 @@ Encoded on ${G_SCRIPT_RUN_DATE}
 $(uname -sr ;
   ffmpeg -version | egrep '^ffmpeg ' | sed -e 's/version //' -e 's/ Copyright.*//' ;
   add_other_commandline_options ;)
-ffmpeg -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} -c:v libx264 -preset ${C_FFMPEG_PRESET} -crf ${C_FFMPEG_CRF} -tune film -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} $(echo $@ | ${SED} -e 's/[\\]//g' -e "s#${HOME}#\\\${HOME}#g" -e 's/ -metadata .*//')
+ffmpeg -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} -c:v libx264 -preset ${C_FFMPEG_PRESET} -crf ${C_FFMPEG_CRF} -tune ${G_OPTION_FFMPEG_TUNE} -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} $(echo $@ | ${SED} -e 's/[\\]//g' -e "s#${HOME}#\\\${HOME}#g" -e 's/ -metadata .*//')
 HERE_DOC
 `" ;
     else  # }{
@@ -3577,7 +3610,7 @@ HERE_DOC
               -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} \
               -c:v libx264 -preset ${C_FFMPEG_PRESET} \
               -crf ${C_FFMPEG_CRF} \
-              -tune film -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} \
+              -tune ${G_OPTION_FFMPEG_TUNE} -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} \
               "$@" \
               -metadata "comment=${G_VIDEO_COMMENT}" \
               "file:${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ;
