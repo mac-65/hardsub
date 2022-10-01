@@ -192,12 +192,13 @@ export FB_CHAR='█' ;
 
 # TODO :: I want to standardize more of these message templates.
 export ATTR_ERROR="${ATTR_RED_BOLD}ERROR -${ATTR_OFF}" ;
-export ATTR_NOTE="${ATTR_OFF}`tput setaf 11`NOTE -${ATTR_OFF}";
+export ATTR_NOTE="${ATTR_OFF}`tput bold; tput setaf 11`NOTE -${ATTR_OFF}";
 export ATTR_TODO="${ATTR_OFF}`tput setaf 11; tput blink`TODO -${ATTR_OFF}";
 export ATTR_TOOL="${ATTR_GREEN_BOLD}" ;
 
 export ATTR_SETTING="`tput bold; tput setaf 184`SETTING" ;
-export ATTR_DISABLE="`tput setaf 172`DISABLING" ;
+export ATTR_DISABLE="`tput bold; tput setaf 172`DISABLING" ;
+export ATTR_PRESET="`tput bold; tput setaf 51`SETTING" ;
 
 HS1_CHARACTERS_QUOTES='‘’∕“”…' ;
 
@@ -295,8 +296,9 @@ trap 'exit_handler' EXIT ;
 C_SCRIPT_NAME="`basename \"$0\"`" ;
 DBG='' ;
 DBG=':' ;
-FFMPEG='/usr/local/bin/ffmpeg -y -nostdin -hide_banner' ;
-FFMPEG='ffmpeg -y -nostdin -hide_banner -loglevel info' ;
+FFMPEG='/usr/local/bin/ffmpeg -y -nostdin' ;
+FFMPEG='ffmpeg -y -nostdin -hide_banner' ;
+FFMPEG_QUIET='-hide_banner -loglevel info' ; # TODO make this a separate setting
 MKVMERGE='/usr/bin/mkvmerge' ;
 MKVEXTRACT='/usr/bin/mkvextract' ;
 DOS2UNIX='/bin/dos2unix --force' ;
@@ -378,7 +380,6 @@ G_OPTION_NO_METADATA='' ;       # Do NOT add any metadata in the re-encoding
                                 # NOTE :: this implies '--no-comment'.
 G_OPTION_NO_COMMENT='' ;        # Do NOT write a '-metadata comment='.  Other
                                 # metadata will be written if appropriate.
-G_OPTION_PRESETS=0 ;            # Number of preset selected on command line.
 
 G_OPTION_SRT_FONT_SIZE=39 ;     # The Default font size for SRT subtitles
 G_OPTION_SRT_DEFAULT_FONT_NAME='NimbusRoman-Regular' ; # The font for SubRip subtitles
@@ -639,18 +640,32 @@ my_usage() {
 # FIXME :: need a G_OPTION_MESSAGES message for the preset
 #
 configure_preset() {
-  local my_option="$1" ; shift ;
   local my_preset="$1" ; shift ;
-  local my_preset_count="$1" ; shift ;
+  local input_video="$1" ; shift ;
+
+
+  if [ "${my_preset}" = '' ] ; then  # {
+    return 0 ;
+  fi  # }
+
+    ###########################################################################
+    # Set the message here, if there's an ERROR we'll abort anyway ...
+    #
+  G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+      printf "  ${ATTR_PRESET} video’s encoding preset configuration to " ;
+      printf "${ATTR_CLR_BOLD}“${ATTR_GREEN_BOLD}%s${ATTR_CLR_BOLD}”.\\\n" \
+             "${my_preset}")" ;
 
   while : ; do  # {
-    if [ "${my_preset}" = '' ] ; then  # Pedantic, I know ...
-      echo "${ATTR_ERROR} '${my_option}' requires a preset name to apply." >&2 ;
-      break ;
-    fi
-
     case "${my_preset}" in  # {
     linkII|ZTE|zte)
+        #######################################################################
+        # This device has no auto-rotation capability, so we have to orient
+        # the video ourselves to get the best screen utilization.
+        #
+        # The rotation is the __last__ filter applied, which is why we scale
+        # its __width__ to a multiple of the ZTE screen's __height__.
+        #
       G_POST_VIDEO_FILTER='transpose=2' ;
         #######################################################################
         # Why use 640 when the phone is 2.8” (240x320)/1.7 (128x160)” TFT LCD?
@@ -658,9 +673,11 @@ configure_preset() {
         # point sizes is rough - it seems I get better results applying a font
         # to a larger image and then letting the phone's HW scaler fit it to
         # the display.  Downsides: larger file size and larger file size for
-        # videos w/o subtitles.  A possible solution is to smart-scale the
-        # video - if there is a subtitle, scale it larger, otherwise, scale to
-        # the device's native display size.
+        # videos w/o subtitles.
+        #
+        # A possible solution is to smart-scale the video,
+        # if is there a subtitle, scale it larger.  Otherwise, scale it to the
+        # device's native display size (which would be 320:-1 in this case).
         #
       G_PRE_VIDEO_FILTER='scale=640:-1' ;
       G_SMART_SCALING=1 ; # TODO :: A marker for a future improvement.
@@ -672,11 +689,29 @@ configure_preset() {
       G_ZTE_FIX_FILENAMES=1 ; # TODO :: A marker for future improvement(s).
       ;;
     Samsung|1920)
-      G_POST_VIDEO_FILTER='' ;
-      G_PRE_VIDEO_FILTER='scale=1920:-1' ;
+        #######################################################################
+        # We'll __only__ scale down this video if we detect that it is over a
+        # size threshold because some devices will NOT scale down a video if it
+        # is too big.  Otherise, we won't change the video resolution.
+        #
+        # We'll only check the width - that should be enough.
+        #
+      local video_width="$(${FFMPEG} -i "${input_video}" 2>&1 \
+            | ${GREP} 'Stream.*Video' \
+            | ${GREP} -o '[1-9][0-9]*x[1-9][0-9]* ' \
+            | ${CUT} -dx -f1)" ;
+      if [ "${video_width}" != '' ] ; then  # {
+
+        if [ ${video_width} -gt 1920 ] ; then  # {
+          G_PRE_VIDEO_FILTER='scale=1920:-1' ;
+          G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+              printf "  ${ATTR_NOTE} ${ATTR_BOLD}limiting video’s " ;
+              printf "encoding to a maximum width of “1920” pixels.\\\n")" ;
+        fi  # }
+      fi  # }
       ;;
     *)
-      echo "${ATTR_ERROR} unrecognized preset='${my_preset}'" ;
+      echo "${ATTR_ERROR} ${ATTR_BOLD}unrecognized “preset='${my_preset}'”" ;
       break ;
       ;;
     esac  # }
@@ -684,7 +719,7 @@ configure_preset() {
     return 0;
   done ;  # }
 
-  exit 1;
+  abort ${FUNCNAME[0]} ${LINENO};
 }
 
 
@@ -1136,9 +1171,15 @@ probe_video() {
     printf "  ${ATTR_YELLOW_BOLD}PROBE OF ${ATTR_CLR_BOLD}'${ATTR_YELLOW}%s%s\n" \
            "${video_file}" \
            "${ATTR_CLR_BOLD}' ${ATTR_YELLOW_BOLD}TRACKS:${ATTR_CLR_BOLD}" ;
-    mkvmerge -i -F json "${video_file}" \
+    { ${MKVMERGE} -i -F json "${video_file}" \
+        | jq '.tracks[]'                \
+        | jq -r '[.id, .type, .properties.display_dimensions, .properties.codec_id, .properties.track_name, .properties.language]|@sh' \
+          | grep "'video'" ;  \
+      ${MKVMERGE} -i -F json "${video_file}" \
         | jq '.tracks[]'                \
         | jq -r '[.id, .type, .properties.codec_id, .properties.track_name, .properties.language]|@sh' \
+          | grep -v "'video'" ; \
+        } \
         | sed -e "s/video/${ATTR_YELLOW_BOLD}video${ATTR_CLR_BOLD}/" \
               -e "s/audio/${ATTR_BLUE_BOLD}audio${ATTR_CLR_BOLD}/" \
               -e "s/subtitles/${ATTR_GREEN}subtitles${ATTR_CLR_BOLD}/" \
@@ -1218,6 +1259,7 @@ fi
 #
 check_getopt() {
   local do_probe=0 ;
+  local option_preset='' ;
 
 ##?? G_OPTION_GLOBAL_MESSAGES='' ; # reset for each call to 'check_getopt()'
 
@@ -1360,7 +1402,7 @@ font-check:: \
       shift 2;
       ;;
     --subs-track)
-      olde_value="${G_OPTION_SUBTITLE_TRACK}" ; # ‘’∕“”… WWWW
+      olde_value="${G_OPTION_SUBTITLE_TRACK}" ; # WWWW
       G_OPTION_SUBTITLE_TRACK="$(get_option_subtitle_track "$1" "$2")" ; RC=$? ;
       G_OPTION_SUBTITLE_TRACK_TYPE=${RC} ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
@@ -1454,8 +1496,11 @@ font-check:: \
       G_OPTION_TRN_SED_SCRIPT_DISABLE=1 ; shift ;
       ;;
     --preset)
-      (( G_OPTION_PRESETS++ ));
-      configure_preset "$1" "$2" "${G_OPTION_PRESETS}" ;
+      if [ "${option_preset}" = '' ] ; then  # {
+        option_preset="$(get_option_string "$1" "$2")" ;
+      else  # }{
+        : ; # FIXME :: FLAG AS A WARNING, and IGNORE
+      fi  # }
       shift 2;
       ;;
     --title|-t)
@@ -1469,7 +1514,7 @@ font-check:: \
     --tune)
       G_OPTION_FFMPEG_TUNE="$(get_option_string "$1" "$2")" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-          printf "  ${ATTR_SETTING} ffmpeg’s -tune to " ;
+          printf "  ${ATTR_SETTING} ffmpeg’s “-tune” to " ;
           printf "${ATTR_CLR_BOLD}'${ATTR_GREEN_BOLD}%s${ATTR_CLR_BOLD}'.\\\n" \
                  "$2")" ;
       shift 2;
@@ -1523,11 +1568,24 @@ font-check:: \
   fi  # }
 
     ###########################################################################
-    # If we make it this far, “G_IN_VIDEO_FILE” is __always__ set, let's see
-    # if the user wants to probe its tracks ...
+    # If we make it this far, “G_IN_VIDEO_FILE” is __always__ set, let's:
+    # - ensure that it's not an EMPTY file, and
+    # - see if the user wants to probe its tracks ...
     #
+  if ! [ -s "${G_IN_VIDEO_FILE}" ] ; then
+    printf "${ATTR_ERROR} ${ATTR_BOLD}‘${ATTR_YELLOW_BOLD}%s${ATTR_CLR_BOLD}’\n" \
+           "${G_IN_VIDEO_FILE}" ;
+    printf "        ${ATTR_RED_BOLD}Is not there or is an EMPTY file.${ATTR_OFF}\n"
+    abort ${FUNCNAME[0]} ${LINENO};
+  fi
+
   (( do_probe )) && probe_video "${G_IN_VIDEO_FILE}" ;
   (( do_probe -= 2 )) || { echo -ne "${G_OPTION_GLOBAL_MESSAGES}" ; exit 0 ; }
+
+    ###########################################################################
+    # Some presets require the name of the input video, which we'll have now.
+    #
+  configure_preset "${option_preset}" "${G_IN_VIDEO_FILE}" ;
 
   return 0 ;
 }
@@ -3149,13 +3207,6 @@ check_getopt "$@" ;
 
 # FIXME :: if there's a embedded CLI file, indicate that we're ignoring it.
 (( G_ALLOW_EMBEDDED_OPTIONS )) && check_embedded_options "${G_IN_VIDEO_FILE}" ;
-
-if ! [ -s "${G_IN_VIDEO_FILE}" ] ; then
-  printf "${ATTR_ERROR} ${ATTR_BOLD}‘${ATTR_YELLOW_BOLD}%s${ATTR_CLR_BOLD}’\n" \
-         "${G_IN_VIDEO_FILE}" ;
-  printf "        ${ATTR_YELLOW_BOLD}Is not there or is an EMPTY file.${ATTR_OFF}\n"
-  exit 3 ;
-fi
 
 G_IN_EXTENSION="${G_IN_VIDEO_FILE##*.}" ;
 G_IN_BASENAME="$(basename "${G_IN_VIDEO_FILE}" ".${G_IN_EXTENSION}")" ;
