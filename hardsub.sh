@@ -199,11 +199,11 @@ export ATTR_TOOL="${ATTR_GREEN_BOLD}" ;
 export ATTR_SETTING="`tput bold; tput setaf 184`SETTING" ;
 export ATTR_DISABLE="`tput bold; tput setaf 172`DISABLING" ;
 export ATTR_PRESET="`tput bold; tput setaf 51`SETTING" ;
+export ATTR_SUBTITLE="`tput bold; tput setaf 93`USING" ;
 
 HS1_CHARACTERS_QUOTES='‘’∕“”…' ;
 
 export G_SED_FILE='' ;
-export G_TRN_FILE='' ; # Unused for now ...
 
 ###############################################################################
 ###############################################################################
@@ -231,29 +231,27 @@ abort() {
 
 exit_handler() {
 
-   [ "${G_OPTION_DEBUG}" = '' ] \
+  echo ; tput sgr0 ;
+  [ "${G_OPTION_DEBUG}" = '' ] \
        && [ -f "${G_SED_FILE}" ] \
        && /bin/rm -f "${G_SED_FILE}" ;
-   [ "${G_OPTION_DEBUG}" = '' ] \
-       && [ -f "${G_TRN_FILE}" ] \
-       && /bin/rm -f "${G_TRN_FILE}" ;
 }
 
 sigterm_handler() {
-   { set +x ; } >/dev/null 2>&1 ;
+  { set +x ; } >/dev/null 2>&1 ;
 
-   MY_REASON='ABORTED' ;
-   if [ $# -ne 0 ] ; then
-      MY_REASON="$1" ; shift ;
-   fi
+  MY_REASON='ABORTED' ;
+  if [ $# -ne 0 ] ; then
+    MY_REASON="$1" ; shift ;
+  fi
 
-   exit_handler ;
+  exit_handler ;
 
-   tput setaf 1 ; tput bold ;
-   for yy in {01..03} ; do echo -n "${MY_REASON} " ; done ;
-   echo ; tput sgr0 ;
+  tput setaf 1 ; tput bold ;
+  for yy in {01..03} ; do echo -n "${MY_REASON} " ; done ;
+  echo ; tput sgr0 ;
 
-   exit 1 ;
+  exit 1 ;
 }
 trap 'sigterm_handler' HUP INT QUIT TERM ; # Don't include 'EXIT' here...
 trap 'exit_handler' EXIT ;
@@ -640,8 +638,8 @@ my_usage() {
 # FIXME :: need a G_OPTION_MESSAGES message for the preset
 #
 configure_preset() {
-  local my_preset="$1" ; shift ;
   local input_video="$1" ; shift ;
+  local my_preset="$1" ; shift ;
 
 
   if [ "${my_preset}" = '' ] ; then  # {
@@ -1086,43 +1084,36 @@ get_option_integer() {
 # using mkvmerge (that is, if the user specifies track 1 for the subtitle,
 # that track must be a text subtitle, not a video or audio track).
 #
-get_option_subtitle_track() { # WWWW
+get_option_subtitle_track() {
   local my_option="$1" ; shift ;
   local in_value="$1" ; shift ;
 
-  (( err_lineno = $LINENO + 3 ));
 
-  while : ; do  # {
-    if [ "${in_value}" = '' ] ; then  #  { Pedantic, I know ...
-      echo >&2 -n "${ATTR_ERROR} '${my_option}' requires: a number; "
-      echo >&2    "‘first’ or ‘last’; or a regx pattern." ;
-      break ;
-    fi  # }
+  if [ "${in_value}" = '' ] ; then  #  { Pedantic, I know ...
+    echo >&2 -n "${ATTR_ERROR} '${my_option}' requires: a number; "
+    echo >&2    "‘first’ or ‘last’; or a simple regx pattern." ;
+    abort ${FUNCNAME[0]} $LINENO ;
+  fi  # }
 
-    if [[ $in_value = 'first' || $in_value = 'last' ]] ; then  # {
-      printf '%s' "${in_value}" ;
-      return 0;
-    fi  # }
+  local rc=0 ;
+  local re='^[0-9]{1,2}$' ; # Simple way to check if string is an integer
 
-    local re='^[0-9]{1,2}$' ; # Simple way to check if string is an integer
-    # TODO :: check for a valid # then check that its value is less than 100?
-    if [[ $in_value =~ $re ]] ; then  # {
-      printf '%s' "${in_value}" ;
-      return 1;
-    fi  # }
+  if [[ $in_value = 'first' || $in_value = 'last' ]] ; then  # {
+    :
+  elif [[ $in_value =~ $re ]] ; then  # }{
+    in_value="$(printf '%d' "$((10#$in_value))")" ;
+    rc=1 ;
+  else  # }{
+    rc=2 ;
+  fi  # }
 
-    printf '%s' "${in_value}" ;
-    return 2;
-  done  # }
-
-    ###########################################################################
-    # FAILURE :: exit; we've already printed an appropriate error message above
-    #
-  abort ${FUNCNAME[0]} ${err_lineno} ;
+  printf '%s' "${in_value}" ;
+  return $rc ;
 }
 
+
 ###############################################################################
-# get_option_string  option  value
+# get_option_string(option, value)
 #
 # Get an option's simple string argument.
 #
@@ -1132,7 +1123,7 @@ get_option_string() {
 
   while : ; do  # {
     if [ "${in_string}" = '' ] ; then  #  { Pedantic, I know ...
-      echo >&2 "${ATTR_ERROR} '${my_option}' requires a string." ;
+      echo >&2 "${ATTR_ERROR} ‘${my_option}’ requires a string." ;
       (( err_lineno = $LINENO - 1 ));
       break ;
     fi  # }
@@ -1149,6 +1140,71 @@ get_option_string() {
 
 
 ###############################################################################
+# select_subtitle_track_number(in_video, track_type, track_spec)
+#
+# Get the track number of the subtitle specified.
+#
+select_subtitle_track_number() {
+  local in_video="$1" ; shift ;
+  local track_type="$1" ; shift ; # 0, 1, or 2
+  local track_spec="$1" ; shift ;
+
+  case ${track_type} in  # {
+  0) # 'first' or 'last'
+    case "${track_spec}" in  # {
+      auto|first) which_cmd='head -1' ; ;;
+      last) which_cmd='tail -1' ; ;;
+    esac  # }
+    track_desc="$(${MKVMERGE} -i "${in_video}" | ${GREP} 'subtitles' | ${which_cmd})" ;
+    track_num="$(echo "${track_desc}" | ${CUT} -d: -f1 | ${CUT} -d' ' -f3)" ;
+    ;;
+  1)
+    track_num=${track_spec} ;
+    ${MKVMERGE} -i -F json "${in_video}" \
+          | jq -r "[.tracks[${track_num}].properties.codec_id]|@sh" \
+          | ${GREP} 'S_TEXT' ; rc=$? ;
+    if [ $rc -ne 0 ] ; then
+      # FIXME :: maybe set track_num='' and let logic below handle it ...
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          printf '%s' '  !!! TRYING DEFAULT, TRACK IS NOT A TEXT TRACK !!!' ;
+          printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
+      select_subtitle_track_number "${in_video}" 0 'first' ;
+      return ;
+    fi
+    ;;
+  2)
+    ;;
+  *)
+    ;;
+  esac  # }
+
+    ###########################################################################
+    # Right now, this logic __only__ supports 'S_TEXT' subtitles (no PGS).
+    #
+  if [ "${track_num}" != '' ] ; then  # {
+    track_details="$(${MKVMERGE} -i -F json "${in_video}" \
+          | jq -r "[.tracks[${track_num}].properties.codec_id,   \
+                    .tracks[${track_num}].properties.track_name, \
+                    .tracks[${track_num}].properties.encoding,   \
+                    .tracks[${track_num}].properties.language]|@sh")" ;
+
+    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+    printf "  ${ATTR_SUBTITLE} ${ATTR_CLR_BOLD}subtitle track “${ATTR_YELLOW}%s${ATTR_CLR_BOLD}” " \
+           "${track_spec}" ;
+    printf "is “${ATTR_GREEN}%s${ATTR_CLR_BOLD}”" "${track_details}" ;
+    printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
+  else  # }{
+    :
+    # the "logic below" ...  dunno - needs a "flag" so it doesn't infinite-loop ...
+    # See if we can try the default "first" ...
+  fi  # }
+
+  set +x
+
+} # WWWW
+
+
+###############################################################################
 # probe_video(video_file)
 #
 # Perform a probe of the video file tracks.  Typical output may look like -->
@@ -1159,10 +1215,8 @@ get_option_string() {
 #
 # This info may be needed to correctly select (TODO) the:
 #   - correct or desired subtitle tracks, and/or
-#   - desired audio track.
-#
-# Because of the order of these functions, this is the last function called
-# (so its message is appended to the end).
+#   - desired audio stream.
+#   - (in the future?) desired video track
 #
 probe_video() {
   local video_file="$1" ; shift ;
@@ -1173,7 +1227,7 @@ probe_video() {
            "${ATTR_CLR_BOLD}' ${ATTR_YELLOW_BOLD}TRACKS:${ATTR_CLR_BOLD}" ;
     { ${MKVMERGE} -i -F json "${video_file}" \
         | jq '.tracks[]'                \
-        | jq -r '[.id, .type, .properties.display_dimensions, .properties.codec_id, .properties.track_name, .properties.language]|@sh' \
+        | jq -r '[.id, .type, .properties.display_dimensions, .properties.codec_id, .properties.track_name]|@sh' \
           | grep "'video'" ;  \
       ${MKVMERGE} -i -F json "${video_file}" \
         | jq '.tracks[]'                \
@@ -1579,13 +1633,21 @@ font-check:: \
     abort ${FUNCNAME[0]} ${LINENO};
   fi
 
-  (( do_probe )) && probe_video "${G_IN_VIDEO_FILE}" ;
-  (( do_probe -= 2 )) || { echo -ne "${G_OPTION_GLOBAL_MESSAGES}" ; exit 0 ; }
+##--  (( do_probe )) && probe_video "${G_IN_VIDEO_FILE}" ;
+##--  (( do_probe -= 2 )) || { echo -ne "${G_OPTION_GLOBAL_MESSAGES}" ; exit 0 ; }
 
     ###########################################################################
-    # Some presets require the name of the input video, which we'll have now.
+    # Some options require a valid input video, which we'll have now.
     #
-  configure_preset "${option_preset}" "${G_IN_VIDEO_FILE}" ;
+  configure_preset "${G_IN_VIDEO_FILE}" "${option_preset}" ;
+
+  # ... from get_option_subtitle_track()
+  select_subtitle_track_number "${G_IN_VIDEO_FILE}" \
+      ${G_OPTION_SUBTITLE_TRACK_TYPE} "${G_OPTION_SUBTITLE_TRACK}" ;
+# select_audio_stream_number "${G_IN_VIDEO_FILE}"
+
+  (( do_probe )) && probe_video "${G_IN_VIDEO_FILE}" ;
+  (( do_probe -= 2 )) || { echo -ne "${G_OPTION_GLOBAL_MESSAGES}" ; exit 0 ; }
 
   return 0 ;
 }
@@ -3415,7 +3477,7 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
 
   else  # }{
 
-    if false ; then  # {
+    if false ; then  # {  WWWW
       : ; # We'll replace this 'false' with a regex variable from the CLI
           # The variable can be one of three track identifiers:
           # - an __absolute__ track number;
