@@ -200,6 +200,7 @@ export ATTR_SETTING="`tput bold; tput setaf 184`SETTING" ;
 export ATTR_DISABLE="`tput bold; tput setaf 172`DISABLING" ;
 export ATTR_PRESET="`tput bold; tput setaf 51`SETTING" ;
 export ATTR_SUBTITLE="`tput bold; tput setaf 93`USING" ;
+export ATTR_NOTICE="`tput bold; tput setaf 44`NOTICE" ;
 
 HS1_CHARACTERS_QUOTES='‘’∕“”…' ;
 
@@ -307,6 +308,7 @@ DATE='/usr/bin/date' ;
 DATE_FORMAT='' ;
 DATE_FORMAT='+%A, %B %e, %Y %X' ;
 GREP='/usr/bin/grep --text --colour=never' ; # saves the embarrassing "binary file matches"
+EGREP='/usr/bin/grep -E --text --colour=never'
 TEE='/usr/bin/tee' ;
 AGREP='/usr/bin/agrep' ;
 AGREP_FUZZY_ITERS=6 ;  # Number of agrep passes to make
@@ -365,6 +367,7 @@ G_OPTION_ASS_SCRIPT=''    ;     # TODO write_me + getopt
 G_OPTION_FFMPEG_TUNE='film' ;   # default for ffmpeg's -tune option
 G_OPTION_SUBTITLE_TRACK='first' ; # This is the default subtitle track to burn
 G_OPTION_SUBTITLE_TRACK_TYPE=0; # (tightly coupled w/G_OPTION_SUBTITLE_TRACK)
+G_OPTION_SUBTITLE_TRACK_NUM=-1; # (tightly coupled w/G_OPTION_SUBTITLE_TRACK)
 G_OPTION_NO_FUZZY='' ;          # if set to 'y', then do't use 'agrep' to test
                                 # the Title in the video file.
 G_OPTION_VERBOSE='' ;           # set to 'y' if '--verbose' is specified to
@@ -646,6 +649,11 @@ configure_preset() {
     return 0 ;
   fi  # }
 
+  G_PRE_VIDEO_FILTER='' ;
+  G_POST_VIDEO_FILTER='' ;
+  G_SMART_SCALING=0 ;     # TODO :: A marker for a future improvement.
+  G_ZTE_FIX_FILENAMES=0 ; # TODO :: A marker for future improvement(s).
+
     ###########################################################################
     # Set the message here, if there's an ERROR we'll abort anyway ...
     #
@@ -698,8 +706,8 @@ configure_preset() {
             | ${GREP} 'Stream.*Video' \
             | ${GREP} -o '[1-9][0-9]*x[1-9][0-9]* ' \
             | ${CUT} -dx -f1)" ;
-      if [ "${video_width}" != '' ] ; then  # {
 
+      if [ "${video_width}" != '' ] ; then  # {
         if [ ${video_width} -gt 1920 ] ; then  # {
           G_PRE_VIDEO_FILTER='scale=1920:-1' ;
           G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
@@ -1150,31 +1158,65 @@ select_subtitle_track_number() {
   local track_spec="$1" ; shift ;
 
   case ${track_type} in  # {
-  0) # 'first' or 'last'
+
+  0) # 'first' or 'last', 'auto-detect' is used internally to indicate a retry ...
     case "${track_spec}" in  # {
-      auto|first) which_cmd='head -1' ; ;;
-      last) which_cmd='tail -1' ; ;;
+      auto-detect|first) which_cmd='head -1' ; ;;
+      last)          which_cmd='tail -1' ; ;;
     esac  # }
     track_desc="$(${MKVMERGE} -i "${in_video}" | ${GREP} 'subtitles' | ${which_cmd})" ;
     track_num="$(echo "${track_desc}" | ${CUT} -d: -f1 | ${CUT} -d' ' -f3)" ;
     ;;
-  1)
+
+  1) # An integer track # < 255 (hopefully!)
     track_num=${track_spec} ;
-    ${MKVMERGE} -i -F json "${in_video}" \
-          | jq -r "[.tracks[${track_num}].properties.codec_id]|@sh" \
-          | ${GREP} 'S_TEXT' ; rc=$? ;
+    track_found="$(${MKVMERGE} -i -F json "${in_video}" \
+          | jq -r "[.tracks[${track_num}].properties.codec_id, \
+                    .tracks[${track_num}].properties.track_name]|@sh")" ;
+    printf '%s' "${track_found}" | ${GREP} 'S_TEXT' ; rc=$? ;
     if [ $rc -ne 0 ] ; then
-      # FIXME :: maybe set track_num='' and let logic below handle it ...
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-          printf '%s' '  !!! TRYING DEFAULT, TRACK IS NOT A TEXT TRACK !!!' ;
-          printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
-      select_subtitle_track_number "${in_video}" 0 'first' ;
-      return ;
+          printf "  ${ATTR_NOTICE} ${ATTR_CLR_BOLD}subtitle track ‘%s’, " "#${track_num}" ;
+          printf "“${ATTR_YELLOW}%s${ATTR_CLR_BOLD}” is not a " "${track_found}" ;
+          printf "‘${ATTR_MAGENTA_BOLD}%s${ATTR_CLR_BOLD}’ codec.${ATTR_OFF}\\\n" 'S_TEXT')" ;
+      select_subtitle_track_number "${in_video}" 0 'auto-detect' ; rc=$? ;
+      return $rc ;
     fi
     ;;
-  2)
+
+  2) # An egrep regx
+    which_cmd='head -1' ; # ... someday, configurable?
+    track_found="$(${MKVMERGE} -i -F json "${in_video}" \
+        | jq '.tracks[]'           \
+        | jq -r "[.id, .type, .properties.codec_id, \
+                  .properties.track_name, .properties.language]|@sh" \
+        | ${EGREP} "${track_spec}" \
+        | ${which_cmd})" ;
+    ${DBG} printf "  ${ATTR_RED}%s\n" "${track_found}"
+    track_num="$(printf '%s' "${track_found}" | ${CUT} -d' ' -f1)" ;
+    if [ "${track_num}" = '' ] ; then
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          printf "  ${ATTR_NOTICE} ${ATTR_CLR_BOLD}subtitle track "
+          printf "“${ATTR_YELLOW}%s${ATTR_CLR_BOLD}” " "${track_spec}" ;
+          printf "was NOT found.${ATTR_OFF}\\\n")" ;
+      select_subtitle_track_number "${in_video}" 0 'auto-detect' ; rc=$? ;
+      return $rc ;
+    fi
+    printf '%s' "${track_found}" | ${GREP} 'S_TEXT' ; rc=$? ;
+    if [ $rc -ne 0 ] ; then
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          printf "  ${ATTR_NOTICE} ${ATTR_CLR_BOLD}subtitle track ‘%s’, " \
+                 "#${track_num}" ;
+          printf "“${ATTR_YELLOW}%s${ATTR_CLR_BOLD}” is not a " \
+                 "$(printf '%s' "${track_found}" | ${CUT} -d' ' -f2-3)" ;
+          printf "‘${ATTR_MAGENTA_BOLD}%s${ATTR_CLR_BOLD}’ codec.${ATTR_OFF}\\\n" \
+                 'S_TEXT')" ;
+      select_subtitle_track_number "${in_video}" 0 'auto-detect' ; rc=$? ;
+      return $rc ;
+    fi
     ;;
   *)
+    abort ${FUNCNAME[0]} ${err_lineno} ;
     ;;
   esac  # }
 
@@ -1182,26 +1224,24 @@ select_subtitle_track_number() {
     # Right now, this logic __only__ supports 'S_TEXT' subtitles (no PGS).
     #
   if [ "${track_num}" != '' ] ; then  # {
+    rc=${track_num} ;
     track_details="$(${MKVMERGE} -i -F json "${in_video}" \
-          | jq -r "[.tracks[${track_num}].properties.codec_id,   \
-                    .tracks[${track_num}].properties.track_name, \
-                    .tracks[${track_num}].properties.encoding,   \
-                    .tracks[${track_num}].properties.language]|@sh")" ;
+        | jq -r "[.tracks[${track_num}].properties.codec_id,   \
+                  .tracks[${track_num}].properties.track_name, \
+                  .tracks[${track_num}].properties.encoding,   \
+                  .tracks[${track_num}].properties.language]|@sh")" ;
 
     G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-    printf "  ${ATTR_SUBTITLE} ${ATTR_CLR_BOLD}subtitle track “${ATTR_YELLOW}%s${ATTR_CLR_BOLD}” " \
-           "${track_spec}" ;
+    printf "  ${ATTR_SUBTITLE} ${ATTR_CLR_BOLD}subtitle track [%d], “${ATTR_YELLOW}%s${ATTR_CLR_BOLD}” " \
+           ${track_num} "${track_spec}" ;
     printf "is “${ATTR_GREEN}%s${ATTR_CLR_BOLD}”" "${track_details}" ;
     printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
   else  # }{
-    :
-    # the "logic below" ...  dunno - needs a "flag" so it doesn't infinite-loop ...
-    # See if we can try the default "first" ...
+    rc=-1 ; # (actually this is converted to an unsigned byte == 255.)
   fi  # }
 
-  set +x
-
-} # WWWW
+  return ${rc} ;
+}
 
 
 ###############################################################################
@@ -1226,13 +1266,15 @@ probe_video() {
            "${video_file}" \
            "${ATTR_CLR_BOLD}' ${ATTR_YELLOW_BOLD}TRACKS:${ATTR_CLR_BOLD}" ;
     { ${MKVMERGE} -i -F json "${video_file}" \
-        | jq '.tracks[]'                \
-        | jq -r '[.id, .type, .properties.display_dimensions, .properties.codec_id, .properties.track_name]|@sh' \
-          | grep "'video'" ;  \
+        | jq '.tracks[]'         \
+        | jq -r "[.id, .type, .properties.display_dimensions, \
+                  .properties.codec_id, .properties.track_name]|@sh" \
+          | ${GREP} "'video'" ;  \
       ${MKVMERGE} -i -F json "${video_file}" \
-        | jq '.tracks[]'                \
-        | jq -r '[.id, .type, .properties.codec_id, .properties.track_name, .properties.language]|@sh' \
-          | grep -v "'video'" ; \
+        | jq '.tracks[]'           \
+        | jq -r "[.id, .type, .properties.codec_id, \
+                  .properties.track_name, .properties.language]|@sh" \
+          | ${GREP} -v "'video'" ; \
         } \
         | sed -e "s/video/${ATTR_YELLOW_BOLD}video${ATTR_CLR_BOLD}/" \
               -e "s/audio/${ATTR_BLUE_BOLD}audio${ATTR_CLR_BOLD}/" \
@@ -1382,7 +1424,7 @@ font-check:: \
       ;;
     -d|--dry-run)
       G_OPTION_GLOBAL_MESSAGES="${G_OPTION_GLOBAL_MESSAGES}$(\
-          printf "  ${ATTR_LTBLUE_BOLD}DRY RUN - ${ATTR_CLR_BOLD}%s\\\n" \
+          printf "  ${ATTR_LTBLUE_BOLD}DRY RUN ${ATTR_CLR_BOLD}%s\\\n" \
                  'ffmpeg will NOT be run after the video’s preprocessing')" ;
       G_OPTION_DRY_RUN='y' ; shift ;
       ;;
@@ -1461,8 +1503,8 @@ font-check:: \
       G_OPTION_SUBTITLE_TRACK_TYPE=${RC} ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
           echo -n "  ${ATTR_SETTING} subtitle track filter ${ATTR_CLR_BOLD}" ;
-          echo -n "(from “${ATTR_OLIVE_BOLD}${olde_value}${ATTR_YELLOW_BOLD}”)"
-          echo -n " to “${ATTR_GREEN_BOLD}${G_OPTION_SUBTITLE_TRACK}" ;
+          echo -n "(from “${ATTR_OLIVE_BOLD}${olde_value}${ATTR_CLR_BOLD}”)"
+          echo -n " ${ATTR_YELLOW_BOLD}to “${ATTR_GREEN_BOLD}${G_OPTION_SUBTITLE_TRACK}" ;
           printf    "${ATTR_YELLOW_BOLD}”${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
       shift 2;
       ;;
@@ -1554,6 +1596,7 @@ font-check:: \
         option_preset="$(get_option_string "$1" "$2")" ;
       else  # }{
         : ; # FIXME :: FLAG AS A WARNING, and IGNORE
+            # NOTE :: an embedded CLI file will replace a '--preset' option
       fi  # }
       shift 2;
       ;;
@@ -1633,23 +1676,13 @@ font-check:: \
     abort ${FUNCNAME[0]} ${LINENO};
   fi
 
-##--  (( do_probe )) && probe_video "${G_IN_VIDEO_FILE}" ;
-##--  (( do_probe -= 2 )) || { echo -ne "${G_OPTION_GLOBAL_MESSAGES}" ; exit 0 ; }
-
     ###########################################################################
     # Some options require a valid input video, which we'll have now.
+    # NOTE :: an embedded '--preset' will replace an existing preset (designed)
     #
   configure_preset "${G_IN_VIDEO_FILE}" "${option_preset}" ;
 
-  # ... from get_option_subtitle_track()
-  select_subtitle_track_number "${G_IN_VIDEO_FILE}" \
-      ${G_OPTION_SUBTITLE_TRACK_TYPE} "${G_OPTION_SUBTITLE_TRACK}" ;
-# select_audio_stream_number "${G_IN_VIDEO_FILE}"
-
-  (( do_probe )) && probe_video "${G_IN_VIDEO_FILE}" ;
-  (( do_probe -= 2 )) || { echo -ne "${G_OPTION_GLOBAL_MESSAGES}" ; exit 0 ; }
-
-  return 0 ;
+  return ${do_probe} ;
 }
 
 
@@ -1692,7 +1725,7 @@ check_embedded_options() {
 
     if [ "${cli_options}" != '' ] ; then  # {
       eval set -- "${cli_options}" ;
-      check_getopt "$@" ;
+      check_getopt "$@" ; # NOTE :: '--do_probe' is effectively ignored
     fi  # }
 
   elif false ; then  # }{
@@ -3265,10 +3298,21 @@ HERE_DOC
   #
 initialize_variables ;
 
-check_getopt "$@" ;
+check_getopt "$@" ; rc=$? ;
+do_probe=${rc} ;
 
 # FIXME :: if there's a embedded CLI file, indicate that we're ignoring it.
 (( G_ALLOW_EMBEDDED_OPTIONS )) && check_embedded_options "${G_IN_VIDEO_FILE}" ;
+
+(( do_probe )) && probe_video "${G_IN_VIDEO_FILE}" ;
+(( do_probe -= 2 )) || { echo -ne "${G_OPTION_GLOBAL_MESSAGES}" ; exit 0 ; }
+
+  # ... from get_option_subtitle_track()
+select_subtitle_track_number "${G_IN_VIDEO_FILE}" \
+      ${G_OPTION_SUBTITLE_TRACK_TYPE} "${G_OPTION_SUBTITLE_TRACK}" ; rc=$? ;
+G_OPTION_SUBTITLE_TRACK_NUM=${rc} ;
+
+# select_audio_stream_number "${G_IN_VIDEO_FILE}"
 
 G_IN_EXTENSION="${G_IN_VIDEO_FILE##*.}" ;
 G_IN_BASENAME="$(basename "${G_IN_VIDEO_FILE}" ".${G_IN_EXTENSION}")" ;
