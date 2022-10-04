@@ -201,6 +201,7 @@ export ATTR_DISABLE="`tput bold; tput setaf 172`DISABLING" ;
 export ATTR_PRESET="`tput bold; tput setaf 51`SETTING" ;
 export ATTR_SUBTITLE="`tput bold; tput setaf 93`USING" ;
 export ATTR_NOTICE="`tput bold; tput setaf 44`NOTICE" ;
+export ATTR_NOT_FOUND="`tput bold; tput setaf 198`NOT FOUND" ;
 
 HS1_CHARACTERS_QUOTES='‘’∕“”…' ;
 
@@ -368,6 +369,7 @@ G_OPTION_FFMPEG_TUNE='film' ;   # default for ffmpeg's -tune option
 G_OPTION_SUBTITLE_TRACK='first' ; # This is the default subtitle track to burn
 G_OPTION_SUBTITLE_TRACK_TYPE=0; # (tightly coupled w/G_OPTION_SUBTITLE_TRACK)
 G_OPTION_SUBTITLE_TRACK_NUM=-1; # (tightly coupled w/G_OPTION_SUBTITLE_TRACK)
+G_OPTION_SUBTITLE_TRACK_SET=0 ; # (tightly coupled w/G_OPTION_SUBTITLE_TRACK)
 G_OPTION_NO_FUZZY='' ;          # if set to 'y', then do't use 'agrep' to test
                                 # the Title in the video file.
 G_OPTION_VERBOSE='' ;           # set to 'y' if '--verbose' is specified to
@@ -908,7 +910,7 @@ apply_percentage() {
   local in_number="$1" ; shift ;
   local my_scale="$1" ; shift ; # number of digits right of the decimal point
 
-  ${DBG} echo >&2 "OPTION = '${my_option}', PERCENTAGE = '${my_percentage}'" ;
+  ${DBG} echo >&2 "OPTION = '${my_option}', PERCENTAGE = '${in_percentage}'" ;
 
   while : ; do  # {
     if [ "${in_percentage}" = '' ] ; then  # Pedantic, I know ...
@@ -916,15 +918,13 @@ apply_percentage() {
       break ;
     fi
 
-    local my_percentage="$(echo "${in_percentage}" | ${SED} -e 's/%$//')" ;
-
     local my_regex='^[0-9]+([.][0-9]+)?$' ;
-    if ! [[ "${my_percentage}" =~ $my_regex ]] ; then
+    if ! [[ "${in_percentage}" =~ $my_regex ]] ; then
       echo >&2 "${ATTR_ERROR} '${my_option}=${in_percentage}' is not a number" ;
       break ;
     fi
 
-    echo "scale=${my_scale};${in_number} * (${my_percentage} / 100)" | ${BC} ;
+    echo "scale=${my_scale};${in_number} * (${in_percentage} / 100)" | ${BC} ;
 
     return 0;
   done ;  # }
@@ -1423,15 +1423,19 @@ font-check:: \
       do_probe=2 ; shift ;
       ;;
     -d|--dry-run)
-      G_OPTION_GLOBAL_MESSAGES="${G_OPTION_GLOBAL_MESSAGES}$(\
+      if ! [ "${G_OPTION_DRY_RUN}" = 'y' ] ; then  # {
+        G_OPTION_GLOBAL_MESSAGES="${G_OPTION_GLOBAL_MESSAGES}$(\
           printf "  ${ATTR_LTBLUE_BOLD}DRY RUN ${ATTR_CLR_BOLD}%s\\\n" \
                  'ffmpeg will NOT be run after the video’s preprocessing')" ;
+      fi  # }
       G_OPTION_DRY_RUN='y' ; shift ;
       ;;
     --debug)
-      G_OPTION_GLOBAL_MESSAGES="${G_OPTION_GLOBAL_MESSAGES}$(\
+      if ! [ "${G_OPTION_DEBUG}" = 'y' ] ; then  # {
+        G_OPTION_GLOBAL_MESSAGES="${G_OPTION_GLOBAL_MESSAGES}$(\
           printf "  ${ATTR_YELLOW_BOLD}DEBUG RUN - ${ATTR_OFF}%s\\\n" \
                  'ffmpeg will run with very fast, low quality settings')" ;
+      fi  # }
       G_OPTION_DEBUG='y' ; shift ;
       ;;
     --no-metadata)
@@ -1490,10 +1494,12 @@ font-check:: \
       ;;
     --srt-font-size-percent)
       olde_value="${G_OPTION_SRT_FONT_SIZE}" ;
-      G_OPTION_SRT_FONT_SIZE="$(apply_percentage "$1" "$2" "${G_OPTION_SRT_FONT_SIZE}" 1)" ;
-      echo -n "  ${ATTR_SETTING} SubRip font size ${ATTR_CLR_BOLD}" ;
-      echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_SRT_FONT_SIZE}" ;
-      echo    "${ATTR_CLR_BOLD} ($2%).${ATTR_OFF}" ;
+      clean_arg="$(echo "$2" | ${SED} -e 's/%$//')"
+      G_OPTION_SRT_FONT_SIZE="$(apply_percentage "$1" "${clean_arg}" "${olde_value}" 1)" ;
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          echo -n "  ${ATTR_SETTING} SubRip’s font size ${ATTR_CLR_BOLD}" ;
+          echo -n "(from ${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_SRT_FONT_SIZE}" ;
+          printf '%s\\n' "${ATTR_CLR_BOLD} (${clean_arg}%).${ATTR_OFF}")" ;
         # TODO :: add a note about this to the comments IF the video really has SubRip subtitles
       shift 2;
       ;;
@@ -1501,6 +1507,7 @@ font-check:: \
       olde_value="${G_OPTION_SUBTITLE_TRACK}" ; # WWWW
       G_OPTION_SUBTITLE_TRACK="$(get_option_subtitle_track "$1" "$2")" ; RC=$? ;
       G_OPTION_SUBTITLE_TRACK_TYPE=${RC} ;
+      G_OPTION_SUBTITLE_TRACK_SET=1 ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
           echo -n "  ${ATTR_SETTING} subtitle track filter ${ATTR_CLR_BOLD}" ;
           echo -n "(from “${ATTR_OLIVE_BOLD}${olde_value}${ATTR_CLR_BOLD}”)"
@@ -1550,11 +1557,12 @@ font-check:: \
       ;;
     --trn-font-size-percent)
       olde_value="${G_OPTION_TRN_FONT_SIZE}" ;
-      G_OPTION_TRN_FONT_SIZE="$(apply_percentage "$1" "$2" "${olde_value}" 1)" ;
+      clean_arg="$(echo "$2" | ${SED} -e 's/%$//')"
+      G_OPTION_TRN_FONT_SIZE="$(apply_percentage "$1" "${clean_arg}" "${olde_value}" 1)" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
           echo -n "  ${ATTR_SETTING} transcript’s font size ${ATTR_CLR_BOLD}" ;
           echo -n "(from ${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_FONT_SIZE}" ;
-          printf    "${ATTR_CLR_BOLD} ($2%%).${ATTR_OFF}\\\n")" ;
+          printf '%s\\n' "${ATTR_CLR_BOLD} (${clean_arg}%).${ATTR_OFF}")" ;
         # TODO :: add a note about this to the comments IF the video really has a transcript
       shift 2;
       ;;
@@ -1712,16 +1720,16 @@ check_embedded_options() {
 
     G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
       printf "  ${ATTR_ORANGE_BOLD}FOUND -${ATTR_CLR_BOLD} embedded CLI file " ;
-      printf "'${ATTR_YELLOW}%s${ATTR_CLR_BOLD}' ...\\\n" "${cli_file}")" ;
+      printf "‘${ATTR_YELLOW}%s${ATTR_CLR_BOLD}’ ...\\\n" "${cli_file}")" ;
 
     local cli_options='' ;
     ${GREP} "^${C_TRN_TAG_EMBEDDED_CLI}[ ]" "${cli_file}" \
       | sed -e "s/^${C_TRN_TAG_EMBEDDED_CLI}[ ]//"        \
-      | while read cli_line ; do
+      | while read cli_line ; do  # {
  
          cli_options="${cli_options} ${cli_line}" ;
-      done
-      printf '%s\n' "${cli_options}" ;
+      done  # }
+      ${DBG} printf 'DEBUG :: ‘%s’\n' "${cli_options}" ;
 
     if [ "${cli_options}" != '' ] ; then  # {
       eval set -- "${cli_options}" ;
@@ -2043,10 +2051,8 @@ extract_font_attachments() {
 extract_subtitle_track() {
   local in_video="$1" ; shift ;
   local save_to_file="$1" ; shift ;
-  local subtitle_track="$1" ; shift ;
+  local track_ID="$1" ; shift ;
 
-
-  local track_ID=`echo "${subtitle_track}" | cut -f1 -d' '` ;
 
   echo -n "   ${ATTR_CYAN_BOLD}Track ${ATTR_CLR_BOLD}${track_ID} ==> " ;
   echo    "${ATTR_YELLOW}'$(basename "${save_to_file}")' ${ATTR_OFF}..." ;
@@ -3307,13 +3313,6 @@ do_probe=${rc} ;
 (( do_probe )) && probe_video "${G_IN_VIDEO_FILE}" ;
 (( do_probe -= 2 )) || { echo -ne "${G_OPTION_GLOBAL_MESSAGES}" ; exit 0 ; }
 
-  # ... from get_option_subtitle_track()
-select_subtitle_track_number "${G_IN_VIDEO_FILE}" \
-      ${G_OPTION_SUBTITLE_TRACK_TYPE} "${G_OPTION_SUBTITLE_TRACK}" ; rc=$? ;
-G_OPTION_SUBTITLE_TRACK_NUM=${rc} ;
-
-# select_audio_stream_number "${G_IN_VIDEO_FILE}"
-
 G_IN_EXTENSION="${G_IN_VIDEO_FILE##*.}" ;
 G_IN_BASENAME="$(basename "${G_IN_VIDEO_FILE}" ".${G_IN_EXTENSION}")" ;
 
@@ -3385,8 +3384,10 @@ fi
 #
 if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
 
+  G_OPTION_MESSAGES='' ;
+
   if [ "$(/bin/ls "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}"*.txt 2>/dev/null \
-        | /bin/wc -l )" != '0' ] ; then
+        | /bin/wc -l )" != '0' ] ; then  # {
 
       #########################################################################
       # A good UX design should be noisy about the right things ...
@@ -3521,38 +3522,33 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
 
   else  # }{
 
-    if false ; then  # {  WWWW
-      : ; # We'll replace this 'false' with a regex variable from the CLI
-          # The variable can be one of three track identifiers:
-          # - an __absolute__ track number;
-          # - the regex pattern that matches the desired track
-          #   (use --probe to select a string to build a pattern against);
-          # - 'first' or 'last'
-          # This would "replace" the first GREP (below) and "catch" the
-          # case where the video stream may be specified as the "subtitle"
-          # track.  The default would be 'first'.
-          #
-          # This would __only__ select the track, not the subtitle TYPE.
-          #
-          # This should be a SUBTITLE_TRACK="$(f(G_IN_VIDEO_FILE, pattern))"
-          # with using the same “RC -eq 0” convention for success.
+      #########################################################################
+      # No subtitle files found, so see if they exist in the video.
+      #
+      # TODO :: the subtitles __could__ exist in a completely different video.
+      #
+    select_subtitle_track_number "${G_IN_VIDEO_FILE}"             \
+                                  ${G_OPTION_SUBTITLE_TRACK_TYPE} \
+                                 "${G_OPTION_SUBTITLE_TRACK}" ; rc=$? ;
+    if [ ${rc} -eq 255 ] ; then rc=-1 ; fi ;
+    G_OPTION_SUBTITLE_TRACK_NUM=${rc} ;
+
+    if [ ${G_OPTION_SUBTITLE_TRACK_NUM} -ne -1 ] ; then  # {
+      SUBTITLE_TRACK_CODEC="$(${MKVMERGE} -i -F json "${G_IN_VIDEO_FILE}" \
+          | jq -r ".tracks[${G_OPTION_SUBTITLE_TRACK_NUM}].properties.codec_id")" ;
+      RC=$? ;
     else  # }{
-      SUBTITLE_TRACK="$(${MKVMERGE} -i -F json "${G_IN_VIDEO_FILE}" \
-        | jq '.tracks[]' \
-        | jq -r '[.id, .type, .properties.codec_id, .properties.track_name, .properties.language]|@sh' \
-        | ${GREP} "'subtitles' 'S_TEXT/" \
-        | ${HEAD} -1 \
-        | ${GREP} "'subtitles' 'S_TEXT/")" ; RC=$? ;
+      RC=3 ;
     fi  # }
 
     if [ ${RC} -eq 0 ] ; then  # { If we got a track, determine its TYPE.
 
-      if ( echo "${SUBTITLE_TRACK}" | ${GREP} -q "'subtitles' 'S_TEXT/ASS'" ) ; then  # {
+      if ( echo "${SUBTITLE_TRACK_CODEC}" | ${GREP} -q 'S_TEXT/ASS' ) ; then  # {
         echo "${ATTR_YELLOW_BOLD}  SUBSTATION ALPHA SUBTITLE FOUND IN VIDEO$(tput sgr0) ..." ;
 
         extract_subtitle_track "${G_IN_VIDEO_FILE}" \
             "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass" \
-            "${SUBTITLE_TRACK}" ;
+            ${G_OPTION_SUBTITLE_TRACK_NUM} ;
 
         G_SUBTITLE_PATHNAME="${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" ;
         apply_script_to_ass_subtitles \
@@ -3566,12 +3562,12 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
             "${C_FONTS_DIR}" \
             0 ;
 
-      elif ( echo "${SUBTITLE_TRACK}" | ${GREP} -q "'subtitles' 'S_TEXT/UTF8'" ) ; then  # }{
+      elif ( echo "${SUBTITLE_TRACK_CODEC}" | ${GREP} -q 'S_TEXT/UTF8' ) ; then  # }{
         echo "${ATTR_CYAN_BOLD}  SUBRIP SUBTITLE FOUND IN VIDEO$(tput sgr0) ..." ;
 
         extract_subtitle_track "${G_IN_VIDEO_FILE}" \
             "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" \
-            "${SUBTITLE_TRACK}" ;
+            ${G_OPTION_SUBTITLE_TRACK_NUM} ;
 
         ${FFMPEG} -i "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" \
                      "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass" \
@@ -3595,17 +3591,34 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
             "${C_FONTS_DIR}" \
             1 ;
 
-      else  # }{
-        echo -n "${ATTR_YELLOW_BOLD}$(tput blink)NOTICE${ATTR_OFF} $(tput bold)-- " ;
+      else  # }{  # FIXME :: print the whole track description
+        # TODO :: add to 'G_OPTION_MESSAGES' instead ...
+        echo -n "  ${ATTR_YELLOW_BOLD}$(tput blink)NOTICE${ATTR_OFF} $(tput bold)-- " ;
         echo -n "skipping unknown/unsupported "
-        echo -n "$(tput setaf 5)S_TEXT$(tput sgr0; tput bold) "
+        echo -n "$(tput setaf 5)${SUBTITLE_TRACK_CODEC}$(tput sgr0; tput bold) "
         echo    "subtitle type -- $(tput sgr0)" ;
         echo    "      <<< '${ATTR_YELLOW}${SUBTITLE_TRACK}$(tput sgr0)' >>>" ;
       fi  # }
+    else  # }{
+        #######################################################################
+        # There was no subtitle track in the video.
+        # This message is a duplicate - should I keep both?
+        #
+      if [ ${G_OPTION_SUBTITLE_TRACK_SET} -ne 0 ] ; then  # {
+        G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          printf "  ${ATTR_NOT_FOUND} ${ATTR_CLR_BOLD}specified subtitle track " ;
+          printf "“${ATTR_YELLOW}%s${ATTR_CLR_BOLD}” ...\\\n" \
+                 "${G_OPTION_SUBTITLE_TRACK}")" ;
+      fi  # }
     fi  # }
   fi  # }
+
+  if [ "${G_OPTION_MESSAGES}" != '' ] ; then  # {
+    echo -ne "${G_OPTION_MESSAGES}" ; # <sic>, couldn't printf this 'cause of '\n's
+  fi  # }
+
 else  # }{
-  echo 'SUBTITLES WERE FORCED SKIPPED' ;
+  echo '  SUBTITLES WERE FORCED SKIPPED' ;
 fi  # }
 
 
