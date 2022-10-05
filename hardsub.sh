@@ -233,7 +233,7 @@ abort() {
 
 exit_handler() {
 
-  echo ; tput sgr0 ;
+  tput sgr0 ;
   [ "${G_OPTION_DEBUG}" = '' ] \
        && [ -f "${G_SED_FILE}" ] \
        && /bin/rm -f "${G_SED_FILE}" ;
@@ -247,6 +247,7 @@ sigterm_handler() {
     MY_REASON="$1" ; shift ;
   fi
 
+  printf '\n' ;
   exit_handler ;
 
   tput setaf 1 ; tput bold ;
@@ -1363,7 +1364,6 @@ check_getopt() {
       --long help::,verbose,config:,fonts-dir:,copy-to:,quality:,\
 dry-run,\
 debug,\
-mono,\
 no-subs,\
 no-comment,\
 no-metadata,\
@@ -1371,7 +1371,9 @@ no-modify-srt,\
 no-fuzzy,\
 probe,\
 probe-only,\
+cli::,\
 title::,\
+genre::,\
 tune::,\
 preset::,\
 out-dir::,\
@@ -1393,6 +1395,7 @@ trn-disable-sed,\
 srt-default-font::,\
 srt-italics-font::,\
 srt-font-size-percent::,\
+mono,\
 font-check:: \
     -n "${ATTR_ERROR} ${ATTR_BLUE_BOLD}${C_SCRIPT_NAME}${ATTR_YELLOW}" -- "$@"` ;
 
@@ -1447,7 +1450,7 @@ font-check:: \
     --no-fuzzy)
       G_OPTION_NO_FUZZY='y' ; shift ;
       ;;
-    --out-dir|--video-out-dir)
+    --out-dir|--video-out-dir) # '--video-out-dir' is preferred except I keep forgetting!
       new_value="$(check_directory "$1" "$2")" ;
       add_option_directory_message 'video’s output' "${G_VIDEO_OUT_DIR}" "${new_value}" ;
       G_VIDEO_OUT_DIR="${new_value}" ;
@@ -1608,6 +1611,14 @@ font-check:: \
       fi  # }
       shift 2;
       ;;
+    --genre)
+      G_OPTION_GENRE="$(get_option_string "$1" "$2")" ;
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          printf "  ${ATTR_SETTING} video’s metadata genre to " ;
+          printf "${ATTR_CLR_BOLD}'${ATTR_GREEN_BOLD}%s${ATTR_CLR_BOLD}'.\\\n" \
+                 "$2")" ;
+      shift 2;
+      ;;
     --title|-t)
       G_OPTION_TITLE="$(get_option_string "$1" "$2")" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
@@ -1710,13 +1721,15 @@ font-check:: \
 # Case 1 is provided for batching a group of input videos.
 #
 check_embedded_options() {
-  in_video="$1" ; shift ;
+  local in_video="$1" ; shift ;
 
   local in_video_dir="$(dirname "${in_video}")" ;
   local in_video_pwd="$(cd -- "${in_video_dir}/" && /bin/pwd -L)" ;
   local cli_file="$(basename "${in_video_pwd}")${C_EMBEDDED_SUFFIX}" ;
 
-  if [ -s "${cli_file}" -a -r "${cli_file}" ] ; then  # {
+  if false ; then  # {
+    : # TODO :: also allow a '.cli' file to be specified on the command line ...
+  elif [ -s "${cli_file}" -a -r "${cli_file}" ] ; then  # }{
 
     G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
       printf "  ${ATTR_ORANGE_BOLD}FOUND -${ATTR_CLR_BOLD} embedded CLI file " ;
@@ -1910,8 +1923,8 @@ get_video_genre() {
   fi  # }
 
   #############################################################################
-  # Ensure that any single quotes are escaped.  FIXME should be done elsewhere.
-  # TODO :: Do I also need to escape the ',' character in the genre?
+  # Ensure that any single quotes are escaped.  FIXME should be done elsewhere?
+  # TODO :: Do I also need to escape any ',' character(s) in the genre?
   #
   echo "$(echo "${out_genre}" \
                    | ${SED} -e 's#\([\x27]\)#\1"\1"\1#g')" ;
@@ -2259,6 +2272,7 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
 
     ###########################################################################
     # These are some common additional stylizations ...
+    # Wait -- are style names case insensitive in libass?!
     #
     '^Style: main,.*'
           'Style: main,Open Sans Semibold,28,&H58DCECEC,&H000000FF,&H08101008,&H00000000,-1,0,0,0,100,100,0,0,1,2.2,0,2,100,100,11,0'
@@ -3797,7 +3811,6 @@ else  # }{
             && echo "${ATTR_YELLOW_BOLD}"       \
             || echo "${ATTR_MAGENTA_BOLD}DRY RUN ")COMPLETE" ;
   printf "${run_desc}${ATTR_CLR_BOLD} '%s' ...\n" "${G_IN_VIDEO_FILE}" ;
-  tput sgr0 ;
   RC=0 ;
 fi  # }
 
