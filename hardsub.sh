@@ -402,6 +402,7 @@ G_OPTION_TRN_PRIMARYCOLOR='6000F8FF' ; # The PrimaryColor spec for Transcript su
 G_OPTION_TRN_OUTLINECOLOR='00101010' ; # The OutlineColor spec for Transcript subtitles
 G_OPTION_TRN_OUTLINE_WEIGHT='2.75' ;   # The outline's weight, 0 "disables" the outline
 G_OPTION_TRN_MARGIN=100 ;       # The default left and right text margin
+G_OPTION_TRN_MARGINV=12 ;       # The default vertical margin
 # TODO FIXME 'Open Sans Semibold' does not exist on blackshed, should print a warning
 G_OPTION_TRN_IS_MUSIC='' ;      # If 'y', then the transcript is music lyrics
 G_OPTION_TRN_MUSIC_CHARS='♩♪♫'; # https://www.alt-codes.net/music_note_alt_codes.php
@@ -1049,9 +1050,11 @@ get_option_integer() {
     in_maximum_value="$1" ; shift ;
   fi
 
+
   while : ; do  # {
     if [ "${in_value}" = '' ] ; then  #  { Pedantic, I know ...
-      echo >&2 "${ATTR_ERROR} '${my_option}' requires an integer." ;
+      printf >&2 "${ATTR_ERROR} '%s' requires an integer " "${my_option}" ;
+      printf >&2 'between %d and %d.\n' ${in_minimum_value} ${in_maximum_value} ;
       break ;
     fi  # }
 
@@ -1061,6 +1064,8 @@ get_option_integer() {
       break ;
     fi  # }
 
+    # TODO :: check for an octal number (ensure 'value' is normalize to decimal)
+
     if [[ $in_value -lt $in_minimum_value ]] ; then  # {
       echo >&2 -n "${ATTR_ERROR} '${my_option}=${in_value}', value is too " ;
       echo >&2    "small (${ATTR_BLUE_BOLD}${in_minimum_value}${ATTR_OFF})." ;
@@ -1069,7 +1074,7 @@ get_option_integer() {
 
     if [[ $in_value -gt $in_maximum_value ]] ; then  # {
       echo >&2 -n "${ATTR_ERROR} '${my_option}=${in_value}', value is too " ;
-      echo >&2    "great (${ATTR_BLUE_BOLD}${in_maximum_value}${ATTR_OFF})." ;
+      echo >&2    "large (${ATTR_BLUE_BOLD}${in_maximum_value}${ATTR_OFF})." ;
       break ;
     fi  # }
 
@@ -1167,6 +1172,9 @@ select_subtitle_track_number() {
     esac  # }
     track_desc="$(${MKVMERGE} -i "${in_video}" | ${GREP} 'subtitles' | ${which_cmd})" ;
     track_num="$(echo "${track_desc}" | ${CUT} -d: -f1 | ${CUT} -d' ' -f3)" ;
+    # FIXME :: TODO :: if "${track_spec}" = 'auto-detect' and track_num = '', then
+    #                  add a message that video doesn't contain desired subtitle track.
+    #                  (This may still miss the '--subs-track=first' case, but do we care?)
     ;;
 
   1) # An integer track # < 255 (hopefully!)
@@ -1385,6 +1393,7 @@ trn-word-time-ms::,\
 trn-is-music,\
 trn-no-words,\
 trn-text-margin::,\
+trn-text-margin-vertical::,\
 trn-font-primarycolor::,\
 trn-font-outlinecolor::,\
 trn-font-outlineweight::,\
@@ -1520,10 +1529,19 @@ font-check:: \
       ;;
     --trn-text-margin)
       olde_value="${G_OPTION_TRN_MARGIN}" ;
-      G_OPTION_TRN_MARGIN="$(get_option_integer "$1" "$2" 25 200)" ;
+      G_OPTION_TRN_MARGIN="$(get_option_integer "$1" "$2" 15 250)" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
           echo -n "  ${ATTR_SETTING} transcript’s left and right margin ${ATTR_CLR_BOLD}" ;
           echo -n "(from ${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_MARGIN}" ;
+          printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
+      shift 2;
+      ;;
+    --trn-text-margin-vertical)
+      olde_value="${G_OPTION_TRN_MARGINV}" ;
+      G_OPTION_TRN_MARGINV="$(get_option_integer "$1" "$2" 0 80)" ; # You'd probably never want to go to 0
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          echo -n "  ${ATTR_SETTING} transcript’s vertical margin ${ATTR_CLR_BOLD}" ;
+          echo -n "(from ${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_MARGINV}" ;
           printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
       shift 2;
       ;;
@@ -3182,7 +3200,7 @@ Style: ${default_style},${G_OPTION_TRN_DEFAULT_FONT_NAME},${G_OPTION_TRN_FONT_SI
 &H00000000,&H00000000,\
 -1,0,0,0,\
 100,100,0,0,1,${G_OPTION_TRN_OUTLINE_WEIGHT},0,\
-2,${G_OPTION_TRN_MARGIN},${G_OPTION_TRN_MARGIN},12,1
+2,${G_OPTION_TRN_MARGIN},${G_OPTION_TRN_MARGIN},${G_OPTION_TRN_MARGINV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
