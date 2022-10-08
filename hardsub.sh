@@ -202,6 +202,7 @@ export ATTR_PRESET="`tput bold; tput setaf 51`SETTING" ;
 export ATTR_SUBTITLE="`tput bold; tput setaf 93`USING" ;
 export ATTR_NOTICE="`tput bold; tput setaf 44`NOTICE" ;
 export ATTR_NOT_FOUND="`tput bold; tput setaf 198`NOT FOUND" ;
+export ATTR_FFMPEG="`tput bold; tput setaf 196`FFMPEG" ;
 
 HS1_CHARACTERS_QUOTES='‘’∕“”…' ;
 
@@ -269,6 +270,7 @@ trap 'exit_handler' EXIT ;
 # - util-linux  - getopt (not bash's getopts())
 # - fontconfig  - used to validate a fontname (e.g., '--srt-default-font=...)
 # - grep        - includes 'egrep' via script or hard-link to grep
+# - which       - ...for finding where executables live
 # - bc          - for (re-)calculating font sizes (floating point math)
 # - jq          - used to parse mkvmerge's json output
 #                 developed and tested with version 1.6
@@ -297,8 +299,12 @@ trap 'exit_handler' EXIT ;
 C_SCRIPT_NAME="`basename \"$0\"`" ;
 DBG='' ;
 DBG=':' ;
+G_FFMPEG_BIN='/usr/bin/ffmpeg' ;
+G_FFMPEG_OPT='-y -nostdin -hide_banner' ;
+
 FFMPEG='/usr/local/bin/ffmpeg -y -nostdin' ;
 FFMPEG='ffmpeg -y -nostdin -hide_banner' ;
+FFMPEG="${G_FFMPEG_BIN} ${G_FFMPEG_OPT}" ;
 FFMPEG_QUIET='-hide_banner -loglevel info' ; # TODO make this a separate setting
 MKVMERGE='/usr/bin/mkvmerge' ;
 MKVEXTRACT='/usr/bin/mkvextract' ;
@@ -734,6 +740,49 @@ configure_preset() {
 
 
 ###############################################################################
+# check_ffmpeg_binary(my_option, my_directory)
+#
+# DOES NOT return if there was an error.
+#
+check_ffmpeg_binary() {
+  local my_option="$1" ; shift ;
+  local my_ffmpeg="$1" ; shift ;
+
+
+  while : ; do  # {
+    if [ "${my_ffmpeg}" = '' ] ; then  # Pedantic, I know ...
+      echo "${ATTR_ERROR} ‘${my_option}’ requires a valid ffmpeg executable." >&2 ;
+      break ;
+    fi
+
+      #########################################################################
+      # Use 'which' to get a complete pathname of the ffmpeg executable, and
+      # it also ensures that the file __is__ executable.
+      #
+      which "${my_ffmpeg}" >/dev/null 2>&1 ; RC=$? ;
+      (( RC )) && { \
+         printf >&2 "${ATTR_ERROR} ${ATTR_CLR_BOLD}The ‘${ATTR_YELLOW}%s${ATTR_CLR_BOLD}’\n" \
+                    "${my_ffmpeg}" ;
+         printf >&2 "        executable was not found by ‘which’.\n"
+         break ; }
+
+      local which_ffmpeg="$(which "${my_ffmpeg}")" ;
+
+      #########################################################################
+      # SUCCESS :: return directory's name as required.
+      #
+    printf '%s' "${which_ffmpeg}" ;
+    return 0;
+  done ;  # }
+
+    ###########################################################################
+    # FAILURE :: exit; we've already printed an appropriate error message above
+    #
+  abort ${FUNCNAME[0]} ${LINENO};
+}
+
+
+###############################################################################
 # check_directory(my_option, my_directory)
 #
 # We use this to check those CLI options which require a directcory pathname.
@@ -745,11 +794,11 @@ check_directory() {
   local my_option="$1" ; shift ;
   local my_directory="$1" ; shift ;
 
-  ${DBG} echo "OPTION = '${my_option}', DIR = '${my_directory}'" >&2 ;
+  ${DBG} echo "OPTION = ‘${my_option}’, DIR = ‘${my_directory}’" >&2 ;
 
   while : ; do  # {
     if [ "${my_directory}" = '' ] ; then  # Pedantic, I know ...
-      echo "${ATTR_ERROR} '${my_option}' requires a directory path." >&2 ;
+      echo "${ATTR_ERROR} ‘${my_option}’ requires a directory path." >&2 ;
       break ;
     fi
 
@@ -1335,7 +1384,7 @@ fi
 ###############################################################################
 ###############################################################################
 ###############################################################################
-# check_getopt()
+# check_getopt(is_cli, ...)
 #
 # TODO :: add a "special" option to indicate that this call is for embedded
 #         options (something that's not easily typed on the keyboard).
@@ -1366,6 +1415,8 @@ check_getopt() {
   local do_probe=0 ;
   local option_preset='' ;
 
+  local is_cli=$1 ; shift ;
+
 ##?? G_OPTION_GLOBAL_MESSAGES='' ; # reset for each call to 'check_getopt()'
 
   HS_OPTIONS=`getopt -o dpt::h::vc:f:yq: \
@@ -1379,6 +1430,7 @@ no-modify-srt,\
 no-fuzzy,\
 probe,\
 probe-only,\
+ffmpeg::,\
 cli::,\
 title::,\
 genre::,\
@@ -1428,11 +1480,24 @@ font-check:: \
       ;;
   # --mux-subs)   # If there are subtitles, then also MUX them into the video
   #   ;;
-    -p|--probe)
-      do_probe=1 ; shift ;
+    -p|--probe|--probe-only)
+      if (( is_cli )) ; then  # {
+        G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          printf "  ${ATTR_NOTICE} ${ATTR_CLR_BOLD}‘%s’ %s\\\n" \
+                 "$1" 'is ignored in a CLI option file.')" ;
+      elif [ "$1" = '--probe-only' ] ; then # }{
+        do_probe=2 ;
+      else  # }{
+        do_probe=1 ;
+      fi  # }
+      shift ;
       ;;
-    --probe-only)
-      do_probe=2 ; shift ;
+    --ffmpeg)
+        G_FFMPEG_BIN="$(check_ffmpeg_binary "$1" "$2")" ;
+        G_OPTION_GLOBAL_MESSAGES="${G_OPTION_GLOBAL_MESSAGES}$(\
+          printf "  ${ATTR_FFMPEG}${ATTR_CLR_BOLD} ‘%s’.\\\n"  \
+                 "${G_FFMPEG_BIN}")" ;
+      shift 2 ;
       ;;
     -d|--dry-run)
       if ! [ "${G_OPTION_DRY_RUN}" = 'y' ] ; then  # {
@@ -1746,7 +1811,7 @@ check_embedded_options() {
   local cli_file="$(basename "${in_video_pwd}")${C_EMBEDDED_SUFFIX}" ;
 
   if false ; then  # {
-    : # TODO :: also allow a '.cli' file to be specified on the command line ...
+    : # TODO :: also allow a '.cli' file to be specified on the command line ..?
   elif [ -s "${cli_file}" -a -r "${cli_file}" ] ; then  # }{
 
     G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
@@ -1764,7 +1829,7 @@ check_embedded_options() {
 
     if [ "${cli_options}" != '' ] ; then  # {
       eval set -- "${cli_options}" ;
-      check_getopt "$@" ; # NOTE :: '--do_probe' is effectively ignored
+      check_getopt 1 "$@" ; # NOTE :: '--do_probe' is effectively ignored
     fi  # }
 
   elif false ; then  # }{
@@ -3336,11 +3401,16 @@ HERE_DOC
   #
 initialize_variables ;
 
-check_getopt "$@" ; rc=$? ;
+check_getopt 0 "$@" ; rc=$? ;
 do_probe=${rc} ;
 
 # FIXME :: if there's a embedded CLI file, indicate that we're ignoring it.
 (( G_ALLOW_EMBEDDED_OPTIONS )) && check_embedded_options "${G_IN_VIDEO_FILE}" ;
+
+  #############################################################################
+  # At this point, set which ffmpeg we're going to use ...
+  #
+FFMPEG="${G_FFMPEG_BIN} ${G_FFMPEG_OPT}" ;
 
 (( do_probe )) && probe_video "${G_IN_VIDEO_FILE}" ;
 (( do_probe -= 2 )) || { echo -ne "${G_OPTION_GLOBAL_MESSAGES}" ; exit 0 ; }
@@ -3798,7 +3868,7 @@ if [ ! -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" \
       G_VIDEO_COMMENT="`cat <<HERE_DOC
 Encoded on ${G_SCRIPT_RUN_DATE}
 $(uname -sr ;
-  ffmpeg -version | egrep '^ffmpeg ' | sed -e 's/version //' -e 's/ Copyright.*//' ;
+  ${FFMPEG} -version | egrep '^ffmpeg ' | sed -e 's/version //' -e 's/ Copyright.*//' ;
   add_other_commandline_options ;)
 ffmpeg -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} -c:v libx264 -preset ${C_FFMPEG_PRESET} -crf ${C_FFMPEG_CRF} -tune ${G_OPTION_FFMPEG_TUNE} -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} $(echo $@ | ${SED} -e 's/[\\]//g' -e "s#${HOME}#\\\${HOME}#g" -e 's/ -metadata .*//')
 HERE_DOC
