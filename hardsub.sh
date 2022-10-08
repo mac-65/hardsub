@@ -304,7 +304,7 @@ G_FFMPEG_OPT='-y -nostdin -hide_banner' ;
 
 FFMPEG='/usr/local/bin/ffmpeg -y -nostdin' ;
 FFMPEG='ffmpeg -y -nostdin -hide_banner' ;
-FFMPEG="${G_FFMPEG_BIN} ${G_FFMPEG_OPT}" ;
+##-- FFMPEG="${G_FFMPEG_BIN} ${G_FFMPEG_OPT}" ;
 FFMPEG_QUIET='-hide_banner -loglevel info' ; # TODO make this a separate setting
 MKVMERGE='/usr/bin/mkvmerge' ;
 MKVEXTRACT='/usr/bin/mkvextract' ;
@@ -712,7 +712,7 @@ configure_preset() {
         #
         # We'll only check the width - that should be enough.
         #
-      local video_width="$(${FFMPEG} -i "${input_video}" 2>&1 \
+      local video_width="$("${G_FFMPEG_BIN}" -i "${input_video}" 2>&1 \
             | ${GREP} 'Stream.*Video' \
             | ${GREP} -o '[1-9][0-9]*x[1-9][0-9]* ' \
             | ${CUT} -dx -f1)" ;
@@ -3410,7 +3410,7 @@ do_probe=${rc} ;
   #############################################################################
   # At this point, set which ffmpeg we're going to use ...
   #
-FFMPEG="${G_FFMPEG_BIN} ${G_FFMPEG_OPT}" ;
+##-- FFMPEG="\"${G_FFMPEG_BIN}\" ${G_FFMPEG_OPT}" ;
 
 (( do_probe )) && probe_video "${G_IN_VIDEO_FILE}" ;
 (( do_probe -= 2 )) || { echo -ne "${G_OPTION_GLOBAL_MESSAGES}" ; exit 0 ; }
@@ -3542,12 +3542,12 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
       [ "${G_OPTION_VERBOSE}" = 'y' ] && \
         echo "${ATTR_YELLOW_BOLD}FOUND AN SRT SUBTITLE$(tput sgr0).." ;
       set -x ; # We want to KEEP this enabled.
-      ${FFMPEG} -i "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" \
-                   "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass" \
+      "${G_FFMPEG_BIN}" -i "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" \
+                           "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass" \
           >/dev/null 2>&1 ;
       { RC=$? ; set +x ; } >/dev/null 2>&1
       if [ ${RC} -ne 0 ] ; then
-        echo -n "${ATTR_ERROR} ${FFMPEG} -i " ;
+        echo -n "${ATTR_ERROR} '${G_FFMPEG_BIN}' -i " ;
         echo -n "'${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt' " ;
         echo    "'${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass'" ;
         exit 1 ;
@@ -3671,12 +3671,12 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
             "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" \
             ${G_OPTION_SUBTITLE_TRACK_NUM} ;
 
-        ${FFMPEG} -i "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" \
-                     "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass" \
+        "${G_FFMPEG_BIN}" -i "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" \
+                           "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass" \
             >/dev/null 2>&1 ; RC=$? ;
         { set +x ; } >/dev/null 2>&1
         if [ ${RC} -ne 0 ] ; then
-          echo -n "${ATTR_ERROR} ${FFMPEG} -i " ;
+          echo -n "${ATTR_ERROR} '${G_FFMPEG_BIN}' -i " ;
           echo -n "'${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt' " ;
           echo    "'${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass'" ;
           exit 1 ;
@@ -3847,7 +3847,7 @@ if [ ! -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" \
     || [ "${G_OPTION_NO_METADATA}" = 'y' ] ; then  # {
 
     set -x ; # We want to KEEP this enabled.
-    ${FFMPEG} -i "${G_IN_VIDEO_FILE}" \
+    "${G_FFMPEG_BIN}" -i "${G_IN_VIDEO_FILE}" \
               -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} \
               -c:v libx264 -preset ${C_FFMPEG_PRESET} \
               -crf ${C_FFMPEG_CRF} \
@@ -3868,7 +3868,9 @@ if [ ! -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" \
       G_VIDEO_COMMENT="`cat <<HERE_DOC
 Encoded on ${G_SCRIPT_RUN_DATE}
 $(uname -sr ;
-  ${FFMPEG} -version | egrep '^ffmpeg ' | sed -e 's/version //' -e 's/ Copyright.*//' ;
+  "${G_FFMPEG_BIN}" -version \
+     | egrep '^ffmpeg '    \
+     | sed -e 's/version //' -e 's/ Copyright.*//' ;
   add_other_commandline_options ;)
 ffmpeg -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} -c:v libx264 -preset ${C_FFMPEG_PRESET} -crf ${C_FFMPEG_CRF} -tune ${G_OPTION_FFMPEG_TUNE} -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} $(echo $@ | ${SED} -e 's/[\\]//g' -e "s#${HOME}#\\\${HOME}#g" -e 's/ -metadata .*//')
 HERE_DOC
@@ -3878,7 +3880,7 @@ HERE_DOC
     fi  # }
 
     set -x ; # We want to KEEP this enabled.
-    ${FFMPEG} -i "${G_IN_VIDEO_FILE}" \
+    "${G_FFMPEG_BIN}" -i "${G_IN_VIDEO_FILE}" \
               -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} \
               -c:v libx264 -preset ${C_FFMPEG_PRESET} \
               -crf ${C_FFMPEG_CRF} \
