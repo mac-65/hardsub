@@ -299,6 +299,11 @@ trap 'exit_handler' EXIT ;
 C_SCRIPT_NAME="`basename \"$0\"`" ;
 DBG='' ;
 DBG=':' ;
+
+  #############################################################################
+  # If ffmpeg is run in a script w/o the '-nostdin' option, some very strange
+  # things and errors can randomly happen ...
+  #
 G_FFMPEG_BIN='/usr/bin/ffmpeg' ;
 G_FFMPEG_OPT='-y -nostdin -hide_banner' ;
 
@@ -315,7 +320,8 @@ FC_SCAN='/usr/bin/fc-scan' ;
 DATE='/usr/bin/date' ;
 DATE_FORMAT='' ;
 DATE_FORMAT='+%A, %B %e, %Y %X' ;
-GREP='/usr/bin/grep --text --colour=never' ; # saves the embarrassing "binary file matches"
+GREP='/usr/bin/grep' ;
+GREP_OPTS='--text --colour=never' ; # saves the embarrassing "binary file matches"
 EGREP='/usr/bin/grep -E --text --colour=never'
 TEE='/usr/bin/tee' ;
 AGREP='/usr/bin/agrep' ;
@@ -326,6 +332,7 @@ AGREP_FUZZY_ERRORS=2 ; # This value is arbitrary and was arrived at by testing.
                        # based on comparing it with the filename of the video.
 SED='/usr/bin/sed' ;
 CUT='/usr/bin/cut' ;
+TAIL='/usr/bin/tail' ;
 CP='/usr/bin/cp' ;
 FOLD='/usr/bin/fold' ;
 HEAD='/usr/bin/head' ;
@@ -707,15 +714,15 @@ configure_preset() {
     Samsung|1920)
         #######################################################################
         # We'll __only__ scale down this video if we detect that it is over a
-        # size threshold because some devices will NOT scale down a video if it
-        # is too big.  Otherise, we won't change the video resolution.
+        # specific size threshold.  Some devices will NOT scale down a video
+        # if it is too big.  Otherise, we won't change the video resolution.
         #
         # We'll only check the width - that should be enough.
         #
-      local video_width="$("${G_FFMPEG_BIN}" -i "${input_video}" 2>&1 \
-            | ${GREP} 'Stream.*Video' \
-            | ${GREP} -o '[1-9][0-9]*x[1-9][0-9]* ' \
-            | ${CUT} -dx -f1)" ;
+      local video_width="$("${G_FFMPEG_BIN}" ${G_FFMPEG_OPT} -i "${input_video}" 2>&1 \
+            | "${GREP}" ${GREP_OPTS} 'Stream.*Video' \
+            | "${GREP}" ${GREP_OPTS} -o '[1-9][0-9]*x[1-9][0-9]* ' \
+            | "${CUT}" -dx -f1)" ;
 
       if [ "${video_width}" != '' ] ; then  # {
         if [ ${video_width} -gt 1920 ] ; then  # {
@@ -910,7 +917,7 @@ check_font_name() {
     fi  # }
     local font_filename="$(echo "${fc_match}" | cut -d':' -f1)" ;
     local font_name="$(echo "${fc_match}" \
-                     | ${SED} -e 's/^.*: "//' -e 's/".*$//')" ;
+                     | "${SED}" -e 's/^.*: "//' -e 's/".*$//')" ;
 
     ###########################################################################
     # 2. Get the pathname for the font file that is returned from 'fc-list'.
@@ -918,7 +925,7 @@ check_font_name() {
     #    to just the first record using 'head'.
     #
     local font_pathname="$(${FC_LIST} "${font_name}"  \
-                         | ${GREP} "${font_filename}" \
+                         | "${GREP}" ${GREP_OPTS} "${font_filename}" \
                          | head -1                    \
                          | cut -d':' -f1)" ;
 
@@ -932,8 +939,8 @@ check_font_name() {
     #     the exact font name for the Style in the Substation Alpha script.
     #
     new_font_name="$(${FC_SCAN} "${font_pathname}" \
-                   | ${GREP} 'fullname:' \
-                   | ${SED} -e 's/^.*: "//' -e 's/".*$//')" ;
+                   | "${GREP}" ${GREP_OPTS} 'fullname:' \
+                   | "${SED}" -e 's/^.*: "//' -e 's/".*$//')" ;
     echo "${new_font_name}" ;
 
     return ${rc} ;
@@ -1217,13 +1224,15 @@ select_subtitle_track_number() {
   0) # 'first' or 'last', 'auto-detect' is used internally to indicate a retry ...
     case "${track_spec}" in  # {
       auto-detect|first) which_cmd='head -1' ; ;;
-      last)          which_cmd='tail -1' ; ;;
+      last)              which_cmd='tail -1' ; ;;
     esac  # }
-    track_desc="$(${MKVMERGE} -i "${in_video}" | ${GREP} 'subtitles' | ${which_cmd})" ;
-    track_num="$(echo "${track_desc}" | ${CUT} -d: -f1 | ${CUT} -d' ' -f3)" ;
-    # FIXME :: TODO :: if "${track_spec}" = 'auto-detect' and track_num = '', then
-    #                  add a message that video doesn't contain desired subtitle track.
-    #                  (This may still miss the '--subs-track=first' case, but do we care?)
+    track_desc="$(${MKVMERGE} -i "${in_video}"   \
+              | "${GREP}" ${GREP_OPTS} 'subtitles' \
+              | ${which_cmd})" ;
+    track_num="$(echo "${track_desc}" | "${CUT}" -d: -f1 | "${CUT}" -d' ' -f3)" ;
+    # FIXME :: if "${track_spec}" = 'auto-detect' and track_num = '', then
+    # TODO  :: add a message that video doesn't contain desired subtitle track.
+    #          (This may still miss the '--subs-track=first' case, but do we care?)
     ;;
 
   1) # An integer track # < 255 (hopefully!)
@@ -1231,7 +1240,7 @@ select_subtitle_track_number() {
     track_found="$(${MKVMERGE} -i -F json "${in_video}" \
           | jq -r "[.tracks[${track_num}].properties.codec_id, \
                     .tracks[${track_num}].properties.track_name]|@sh")" ;
-    printf '%s' "${track_found}" | ${GREP} 'S_TEXT' ; rc=$? ;
+    printf '%s' "${track_found}" | "${GREP}" ${GREP_OPTS} 'S_TEXT' ; rc=$? ;
     if [ $rc -ne 0 ] ; then
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
           printf "  ${ATTR_NOTICE} ${ATTR_CLR_BOLD}subtitle track ‘%s’, " "#${track_num}" ;
@@ -1251,7 +1260,7 @@ select_subtitle_track_number() {
         | ${EGREP} "${track_spec}" \
         | ${which_cmd})" ;
     ${DBG} printf "  ${ATTR_RED}%s\n" "${track_found}"
-    track_num="$(printf '%s' "${track_found}" | ${CUT} -d' ' -f1)" ;
+    track_num="$(printf '%s' "${track_found}" | "${CUT}" -d' ' -f1)" ;
     if [ "${track_num}" = '' ] ; then
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
           printf "  ${ATTR_NOTICE} ${ATTR_CLR_BOLD}subtitle track "
@@ -1260,13 +1269,13 @@ select_subtitle_track_number() {
       select_subtitle_track_number "${in_video}" 0 'auto-detect' ; rc=$? ;
       return $rc ;
     fi
-    printf '%s' "${track_found}" | ${GREP} 'S_TEXT' ; rc=$? ;
+    printf '%s' "${track_found}" | "${GREP}" ${GREP_OPTS} 'S_TEXT' ; rc=$? ;
     if [ $rc -ne 0 ] ; then
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
           printf "  ${ATTR_NOTICE} ${ATTR_CLR_BOLD}subtitle track ‘%s’, " \
                  "#${track_num}" ;
           printf "“${ATTR_YELLOW}%s${ATTR_CLR_BOLD}” is not a " \
-                 "$(printf '%s' "${track_found}" | ${CUT} -d' ' -f2-3)" ;
+                 "$(printf '%s' "${track_found}" | "${CUT}" -d' ' -f2-3)" ;
           printf "‘${ATTR_MAGENTA_BOLD}%s${ATTR_CLR_BOLD}’ codec.${ATTR_OFF}\\\n" \
                  'S_TEXT')" ;
       select_subtitle_track_number "${in_video}" 0 'auto-detect' ; rc=$? ;
@@ -1307,32 +1316,42 @@ select_subtitle_track_number() {
 #
 # Perform a probe of the video file tracks.  Typical output may look like -->
 #
-#   0 'video' 'V_MPEG4/ISO/AVC' null 'und'
-#   1 'audio' 'A_AAC' null 'jpn'
-#   2 'subtitles' 'S_TEXT/ASS' 'English subs' 'eng'
+# TRACKS OF 'video-file.mkv':
+#   0 'video' 'AVC/H.264/MPEG-4p10' '1280x720' 'V_MPEG4/ISO/AVC' 'track-title'
+#   1 'audio' 'FLAC' 'A_FLAC' 2 16 48000 'Japanese 2.0' 'jpn'
+#   2 'subtitles' 'SubStationAlpha' 'S_TEXT/ASS' 'UTF-8' null 'eng'
 #
-# This info may be needed to correctly select (TODO) the:
-#   - correct or desired subtitle tracks, and/or
-#   - desired audio stream.
-#   - (in the future?) desired video track
+# This info may be needed to correctly select the:
+#   - correct or desired subtitle __track__, and/or
+#   - desired audio __stream__.
+#   - (in the future?) desired video __track__.
 #
 probe_video() {
   local video_file="$1" ; shift ;
 
   G_OPTION_GLOBAL_MESSAGES="${G_OPTION_GLOBAL_MESSAGES}$(\
-    printf "  ${ATTR_YELLOW_BOLD}PROBE OF ${ATTR_CLR_BOLD}'${ATTR_YELLOW}%s%s\n" \
+    printf "  ${ATTR_YELLOW_BOLD}TRACKS OF ${ATTR_CLR_BOLD}'${ATTR_YELLOW}%s%s\n" \
            "${video_file}" \
-           "${ATTR_CLR_BOLD}' ${ATTR_YELLOW_BOLD}TRACKS:${ATTR_CLR_BOLD}" ;
+           "${ATTR_CLR_BOLD}':" ;
     { ${MKVMERGE} -i -F json "${video_file}" \
         | jq '.tracks[]'         \
-        | jq -r "[.id, .type, .properties.display_dimensions, \
+        | jq -r "[.id, .type, .codec, .properties.display_dimensions, \
                   .properties.codec_id, .properties.track_name]|@sh" \
-          | ${GREP} "'video'" ;  \
+          | "${GREP}" ${GREP_OPTS} "'video'" ;  \
       ${MKVMERGE} -i -F json "${video_file}" \
         | jq '.tracks[]'           \
-        | jq -r "[.id, .type, .properties.codec_id, \
+        | jq -r "[.id, .type, .codec, .properties.codec_id, \
+                  .properties.audio_channels, \
+                  .properties.audio_bits_per_sample, \
+                  .properties.audio_sampling_frequency, \
                   .properties.track_name, .properties.language]|@sh" \
-          | ${GREP} -v "'video'" ; \
+          | "${GREP}" ${GREP_OPTS} "'audio'" ; \
+      ${MKVMERGE} -i -F json "${video_file}" \
+        | jq '.tracks[]'           \
+        | jq -r "[.id, .type, .codec, .properties.codec_id, \
+                  .properties.encoding, \
+                  .properties.track_name, .properties.language]|@sh" \
+          | "${GREP}" ${GREP_OPTS} "'subtitles'" ; \
         } \
         | sed -e "s/video/${ATTR_YELLOW_BOLD}video${ATTR_CLR_BOLD}/" \
               -e "s/audio/${ATTR_BLUE_BOLD}audio${ATTR_CLR_BOLD}/" \
@@ -1571,7 +1590,7 @@ font-check:: \
       ;;
     --srt-font-size-percent)
       olde_value="${G_OPTION_SRT_FONT_SIZE}" ;
-      clean_arg="$(echo "$2" | ${SED} -e 's/%$//')"
+      clean_arg="$(echo "$2" | "${SED}" -e 's/%$//')"
       G_OPTION_SRT_FONT_SIZE="$(apply_percentage "$1" "${clean_arg}" "${olde_value}" 1)" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
           echo -n "  ${ATTR_SETTING} SubRip’s font size ${ATTR_CLR_BOLD}" ;
@@ -1643,7 +1662,7 @@ font-check:: \
       ;;
     --trn-font-size-percent)
       olde_value="${G_OPTION_TRN_FONT_SIZE}" ;
-      clean_arg="$(echo "$2" | ${SED} -e 's/%$//')"
+      clean_arg="$(echo "$2" | "${SED}" -e 's/%$//')"
       G_OPTION_TRN_FONT_SIZE="$(apply_percentage "$1" "${clean_arg}" "${olde_value}" 1)" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
           echo -n "  ${ATTR_SETTING} transcript’s font size ${ATTR_CLR_BOLD}" ;
@@ -1774,7 +1793,8 @@ font-check:: \
   if ! [ -s "${G_IN_VIDEO_FILE}" ] ; then
     printf "${ATTR_ERROR} ${ATTR_BOLD}‘${ATTR_YELLOW_BOLD}%s${ATTR_CLR_BOLD}’\n" \
            "${G_IN_VIDEO_FILE}" ;
-    printf "        ${ATTR_RED_BOLD}Is not there or is an EMPTY file.${ATTR_OFF}\n"
+    printf "        ${ATTR_RED_BOLD}%s${ATTR_OFF}\n" \
+           'Is not there, is an EMPTY file, or is a broken link.' ;
     abort ${FUNCNAME[0]} ${LINENO};
   fi
 
@@ -1818,12 +1838,14 @@ check_embedded_options() {
       printf "  ${ATTR_ORANGE_BOLD}FOUND -${ATTR_CLR_BOLD} embedded CLI file " ;
       printf "‘${ATTR_YELLOW}%s${ATTR_CLR_BOLD}’ ...\\\n" "${cli_file}")" ;
 
-    local cli_options='' ;
-    ${GREP} "^${C_TRN_TAG_EMBEDDED_CLI}[ ]" "${cli_file}" \
-      | sed -e "s/^${C_TRN_TAG_EMBEDDED_CLI}[ ]//"        \
+    local cli_options='' ; # We also allow trailing comments on the lines.
+    "${GREP}" ${GREP_OPTS} "^${C_TRN_TAG_EMBEDDED_CLI}[ ]" "${cli_file}" \
+      | "${SED}" -e "s/^${C_TRN_TAG_EMBEDDED_CLI}[ ]//" \
+                 -e 's/[ \t][ \t]*#.*$//'               \
       | while read cli_line ; do  # {
  
          cli_options="${cli_options} ${cli_line}" ;
+
       done  # }
       ${DBG} printf 'DEBUG :: ‘%s’\n' "${cli_options}" ;
 
@@ -1902,7 +1924,7 @@ check_installed_tools() {
 #    Single quotes (') in a video's filename or title were quite the challenge.
 #    The solution looks really messy and gnarly but works ...
 #
-# | ${SED} -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
+# | "${SED}" -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
 #
 get_video_title() {
   local in_filename="$1" ; shift ;
@@ -1917,8 +1939,8 @@ get_video_title() {
 
   else  # }{
     local title_in_video="$(${EXIFTOOL} "${in_filename}" \
-                     | ${GREP} '^Title' \
-                     | ${SED} -e 's/^.*: //')" ;
+                     | "${GREP}" ${GREP_OPTS} '^Title' \
+                     | "${SED}" -e 's/^.*: //')" ;
     if [ "${title_in_video}" = '' ] ; then  # {
         #######################################################################
         # There is no Title in the video, so make one from the filename.
@@ -1931,8 +1953,7 @@ get_video_title() {
         #
         ## FIXME -- I should do this filtering cleanup elsewhere ...
       out_title="$(echo "${in_video_basename}" \
-                 | ${SED} -e 's/[_+]/ /g'  \
-                 )" ;
+                 | "${SED}" -e 's/[_+]/ /g')" ;
     elif [ "${G_OPTION_NO_FUZZY}" = '' ] ; then  # }{
         #######################################################################
         # Okay, the source video has a 'Title' metadata tag set.  If the user
@@ -1958,8 +1979,7 @@ get_video_title() {
 
           ## FIXME -- I should do this filtering cleanup elsewhere ...
         out_title="$(echo "${in_video_basename}" \
-                     | ${SED} -e 's/[_+]/ /g'  \
-                     )" ;
+                     | "${SED}" -e 's/[_+]/ /g')" ;
       fi  # }
     fi  # }
   fi  # }
@@ -1969,8 +1989,7 @@ get_video_title() {
   # FIXME :: should this  apostrophe fix be done elsewhere?
   ## 'title=The Byrd'"'"'s - Turn! Turn! Turn! (2nafish)'
   #
-  echo "$(echo "${out_title}" \
-                   | ${SED} -e 's#\([\x27]\)#\1"\1"\1#g')" ;
+  echo "$(echo "${out_title}" | "${SED}" -e 's#\([\x27]\)#\1"\1"\1#g')" ;
 }
 
 
@@ -1991,8 +2010,8 @@ get_video_genre() {
   else  # }{
 
     local genre_in_video="$(${EXIFTOOL} "${in_filename}" \
-                     | ${GREP} '^Genre' \
-                     | ${SED} -e 's/^.*: //')" ;
+                     | "${GREP}" ${GREP_OPTS} '^Genre' \
+                     | "${SED}" -e 's/^.*: //')" ;
     if [ "${genre_in_video}" = '' ] ; then  # {
         #######################################################################
         # There is no Genre in the video, so use the default.
@@ -2009,8 +2028,7 @@ get_video_genre() {
   # Ensure that any single quotes are escaped.  FIXME should be done elsewhere?
   # TODO :: Do I also need to escape any ',' character(s) in the genre?
   #
-  echo "$(echo "${out_genre}" \
-                   | ${SED} -e 's#\([\x27]\)#\1"\1"\1#g')" ;
+  echo "$(echo "${out_genre}" | "${SED}" -e 's#\([\x27]\)#\1"\1"\1#g')" ;
 }
 
 
@@ -2053,7 +2071,7 @@ extract_font_attachments() {
                   # I have: truetype, opentype, font.ttf, and font.otf.
 
   local have_font_attachments='' ;
-  ### TEST_CODE mkvmerge -i "${in_video}" | egrep 'XXXXXXX' \
+
   ${MKVMERGE} -i "${in_video}" | egrep 'truetype|opentype|font.ttf|font.otf' \
                                | while read attachment_line ; do # {
 
@@ -2064,10 +2082,10 @@ extract_font_attachments() {
       # attachment's ID.  Also, attachment names may have embedded SPACEs.
       #
     local attachment_ID=`echo "${attachment_line}" \
-                        | ${SED} -e 's/Attachment ID \([0-9][0-9]*\):.*$/\1/'` ;
+                        | "${SED}" -e 's/Attachment ID \([0-9][0-9]*\):.*$/\1/'` ;
     local attachment_file=`echo "${attachment_line}" \
-                        | ${CUT} -d' ' -f 11- \
-                        | ${SED} -e "s/'//g"` ;
+                        | "${CUT}" -d' ' -f 11- \
+                        | "${SED}" -e "s/'//g"` ;
 
     local font_pathname="${attachments_dir}/${attachment_file}" ;
 
@@ -2076,11 +2094,11 @@ extract_font_attachments() {
       MSG="`${MKVEXTRACT} attachments \"${in_video}\" \"${attachment_ID}:${font_pathname}\"`" ;
       if [ $? -eq 0 ] ; then  # {
         echo    "${MSG}" \
-          | ${SED} -e "s/.*is written to \(.*\).$/${pad_spaces}<< ${ATTR_BLUE_BOLD}EXTRACTING ${ATTR_CLR_BOLD}${attachment_ID}:${attachment_file}${ATTR_OFF} to ${ATTR_CYAN_BOLD}\1${ATTR_OFF}. >>/" \
-          | ${SED} -e "s#${HOME}#\\\${HOME}#g" ;
+          | "${SED}" -e "s/.*is written to \(.*\).$/${pad_spaces}<< ${ATTR_BLUE_BOLD}EXTRACTING ${ATTR_CLR_BOLD}${attachment_ID}:${attachment_file}${ATTR_OFF} to ${ATTR_CYAN_BOLD}\1${ATTR_OFF}. >>/" \
+          | "${SED}" -e "s#${HOME}#\\\${HOME}#g" ;
       else  # }{
         ERR_MKVMERGE=1;
-        MSG="`echo -n \"${MSG}\" | tail -1 | cut -d' ' -f2-`" ;
+        MSG="`echo -n \"${MSG}\" | "${TAIL}" -1 | cut -d' ' -f2-`" ;
         echo    "${ATTR_ERROR} ${MSG}" ;
       fi  # }
     else # }{
@@ -2255,15 +2273,14 @@ apply_script_to_srt_subtitles() {
       # -- I ended up using '%%%' to represent the '\' character to simplify
       # the scripting.
       #
-    ${GREP} -q "${SED_SCRIPT_ARRAY[$idx]}" "${ASS_SRC}" ; RC=$? ;
+    "${GREP}" ${GREP_OPTS} -q "${SED_SCRIPT_ARRAY[$idx]}" "${ASS_SRC}" ; RC=$? ;
     if [ ${RC} -eq 0 ] ; then  # {
       echo -n "${ATTR_GREEN_BOLD}." ;
       (( ido = idx + 1 )) ;
       REPLACEMENT_STR=`echo "${SED_SCRIPT_ARRAY[$ido]}" \
-          | ${SED} -e 's#\\\#\\\\\\\#g'   \
-                   -e 's/,&H/,\\\\\&H/g'  \
-                   -e 's/%%%/\\\/g'
-                 `;
+          | "${SED}" -e 's#\\\#\\\\\\\#g'   \
+                     -e 's/,&H/,\\\\\&H/g'  \
+                     -e 's/%%%/\\\/g'`;
       echo -n '! ' ;
 
       echo "s#${SED_SCRIPT_ARRAY[$idx]}#${REPLACEMENT_STR}#" \
@@ -2288,7 +2305,7 @@ apply_script_to_srt_subtitles() {
   echo -n 'DOS..'
   cat "${ASS_SRC}"  \
       | ${DOS2UNIX} \
-      | ${SED} "--file=${G_SED_FILE}" \
+      | "${SED}" "--file=${G_SED_FILE}" \
     > "${ASS_DST}" ;
   echo ".${ATTR_OFF}" ;
 
@@ -2345,6 +2362,7 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
 
     ###########################################################################
     # Here are a few common ‘Default’ ASS subtitle styles ...
+    # TODO :: A cli to add these pairs as needed by the user.
     #
     '^Style: Default,Roboto Medium,.*'
        'Style: Default,Roboto Medium,24,&H4820FAFF,&H000000FF,&H13102810,&H00000000,-1,0,0,0,100,100,0,0,1,2.2,0,2,100,100,14,0'
@@ -2352,6 +2370,8 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
        'Style: Default,Fontin Sans Rg,46,&H30EBEFF6,&H000000FF,&H10091A04,&HBE000000,-1,0,0,0,100,100,0,0,1,2.4,1,2,90,90,14,1'
     '^Style: Default,Open Sans Semibold,.*'
        'Style: Default,Open Sans Semibold,45,&H4820FAFF,&H000000FF,&H00020713,&H00000000,-1,0,0,0,100,100,0,0,1,2.2,0,2,80,80,13,1'
+    '^Style: Default,Noto Sans SemBd,.*'
+       'Style: Default,Noto Sans SemBd,25,&H4820FAFF,&H000000FF,&H13102810,&H00000000,0,0,0,0,100,100,0,0,1,2.2,0,2,80,80,13,1'
 
     ###########################################################################
     # These are some common additional stylizations ...
@@ -2438,15 +2458,14 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
       # -- I ended up using '%%%' to represent the '\' character to simplify
       # the scripting.
       #
-    ${GREP} -q "${SED_SCRIPT_ARRAY[$idx]}" "${ASS_SRC}" ; RC=$? ;
+    "${GREP}" ${GREP_OPTS} -q "${SED_SCRIPT_ARRAY[$idx]}" "${ASS_SRC}" ; RC=$? ;
     if [ ${RC} -eq 0 ] ; then  # {
       echo -n "${ATTR_GREEN_BOLD}." ;
       (( ido = idx + 1 )) ;
       REPLACEMENT_STR=`echo "${SED_SCRIPT_ARRAY[$ido]}" \
-                    | ${SED} -e 's#\\\#\\\\\\\#g'   \
+                    | "${SED}" -e 's#\\\#\\\\\\\#g'   \
                              -e 's/,&H/,\\\\\&H/g'  \
-                             -e 's/%%%/\\\/g'
-                      `;
+                             -e 's/%%%/\\\/g'`;
       echo -n '! ' ;
 
       echo "s#${SED_SCRIPT_ARRAY[$idx]}#${REPLACEMENT_STR}#" \
@@ -2471,7 +2490,7 @@ apply_script_to_ass_subtitles() {  # input_pathname  output_pathname
   echo -n 'DOS..'
   cat "${ASS_SRC}"  \
       | ${DOS2UNIX} \
-      | ${SED} "--file=${G_SED_FILE}" \
+      | "${SED}" "--file=${G_SED_FILE}" \
     > "${ASS_DST}" ;
   echo ".${ATTR_OFF}" ;
 
@@ -2521,14 +2540,14 @@ my_strptime() {
     #
     # First, we'll try the '00:00' pattern to see if there's a hit.
     #
-  echo "${in_line}" | ${GREP} -q '^[0-9]\{1,2\}:[0-5][0-9]$' ; RC=$? ;
+  echo "${in_line}" | "${GREP}" ${GREP_OPTS} -q '^[0-9]\{1,2\}:[0-5][0-9]$' ; RC=$? ;
   if [ ${RC} -eq 0 ] ; then  # {
 
     ts_pad='00:' ; # It IS the '00:00' pattern, so add the hours prefix ...
 
   else  # }{
 
-    echo "${in_line}" | ${GREP} -q '^[0-9]:[0-5][0-9]:[0-5][0-9]$' ; RC=$? ;
+    echo "${in_line}" | "${GREP}" ${GREP_OPTS} -q '^[0-9]:[0-5][0-9]:[0-5][0-9]$' ; RC=$? ;
     [ ${RC} -ne 0 ] && { printf '' ; return ${RC} ; } ; # bail at this point
 
   fi  # }
@@ -2725,7 +2744,7 @@ run_global_sed_script() {
   local sed_script="$1" ; shift ;
 
   if [ "${sed_script}" != '' ] ; then
-    ${SED} "--file=${sed_script}" ;
+    "${SED}" "--file=${sed_script}" ;
   else
     cat - ;
   fi
@@ -2738,7 +2757,7 @@ run_spell_check_sed_script() {
   local sed_script="$1" ; shift ;
 
   if [ "${sed_script}" != '' ] ; then
-    ${SED} "--file=${sed_script}" ;
+    "${SED}" "--file=${sed_script}" ;
   else
     cat - ;
   fi
@@ -2751,7 +2770,7 @@ run_user_sed_script() {
   local sed_script="$1" ; shift ;
 
   if [ "${sed_script}" != '' ] ; then
-    ${SED} "--file=${sed_script}" ;
+    "${SED}" "--file=${sed_script}" ;
   else
     cat - ;
   fi
@@ -2962,11 +2981,11 @@ add_transcript_text_to_subtitle() {
     #
   local start_of_transcript_lineno=0 ;
 
-  cat "${transcript_file_in}"                 \
-    | ${SED} -e 's/^#[^#]*//'                 \
-             -e 's/^exit[[:space:]]*[0]*.*//' \
-             -e 's/^[[:space:]]*//'           \
-             -e 's/[[:space:]]*$//'           \
+  cat "${transcript_file_in}"                   \
+    | "${SED}" -e 's/^#[^#]*//'                 \
+               -e 's/^exit[[:space:]]*[0]*.*//' \
+               -e 's/^[[:space:]]*//'           \
+               -e 's/[[:space:]]*$//'           \
     | while read ${read_option} current_line ; do  # {
 
       (( transcript_lineno++ )) ;
@@ -3134,19 +3153,19 @@ add_transcript_style_to_subtitle() {
     # Style: Default,Arial,16,...
     # printf '%s' 'Style: Default,Arial,16, ...
     #
-  ${GREP} "^${C_TRN_TAG_ASS_SCRIPT}" "${transcript_file_in}" \
-    | ${SED} -e "s/^${C_TRN_TAG_ASS_SCRIPT}[ ]*//"           \
+  "${GREP}" ${GREP_OPTS} "^${C_TRN_TAG_ASS_SCRIPT}" "${transcript_file_in}" \
+    | "${SED}" -e "s/^${C_TRN_TAG_ASS_SCRIPT}[ ]*//"           \
     | while read text_line ; do  # {
 
       printf "%s\n" "${text_line}"         \
         | ${TEE} -a "${subtitle_file_out}" \
-        | ${GREP} -q '^Style: ' ; RC=$? ;
+        | "${GREP}" ${GREP_OPTS} -q '^Style: ' ; RC=$? ;
 
       if [ "${RC}" -eq 0 ] ; then  # {
         style_in="$(printf '%s' "${text_line}"       \
-            | ${SED} -e 's/,.*$//' -e 's/Style: //')" ;
+            | "${SED}" -e 's/,.*$//' -e 's/Style: //')" ;
         style_font="$(printf '%s' "${text_line}"     \
-            | ${SED} -e 's/^[^,]*,//' -e 's/,.*//')" ;
+            | "${SED}" -e 's/^[^,]*,//' -e 's/,.*//')" ;
 
         printf >&2 "  ${ATTR_YELLOW_BOLD}FOUND -${ATTR_CLR_BOLD} embedded style " ;
         printf >&2 "'${ATTR_BLUE_BOLD}%s${ATTR_CLR_BOLD}' using font '%s'" \
@@ -3236,7 +3255,7 @@ convert_transcripts_to_ass() {
   if [ ${RC} -ne 0 ] ; then  # {
     echo -n "${ATTR_ERROR} "
     echo    "$(echo "${msg}" \
-           | ${SED} -e "s/^\(.*\)'\([^']*\)'\(.*\)/\1'`tput bold; tput setaf 3`\2`tput sgr0`'\3/")" ;
+           | "${SED}" -e "s/^\(.*\)'\([^']*\)'\(.*\)/\1'`tput bold; tput setaf 3`\2`tput sgr0`'\3/")" ;
     abort ${FUNCNAME[0]} ${LINENO};
   fi  # }
 
@@ -3278,10 +3297,9 @@ HERE_DOC
     local transcript_file_in="$1" ; shift ;
     local transcript_style="${default_style}" ;
 
-    local transcript_language="$(${GREP} "^${C_TRN_TAG_LANGUAGE}" \
+    local transcript_language="$(${GREP} ${GREP_OPTS} "^${C_TRN_TAG_LANGUAGE}" \
                                          "${transcript_file_in}"  \
-                               | tail -1                          \
-                               | ${CUT} -d' ' -f2)" ;
+                               | "${TAIL}" -1 | "${CUT}" -d' ' -f2)" ;
     if [ "${transcript_language}" = '' \
         -a ${number_of_transcript_files} -eq 1 ] ; then  # {
       transcript_language="${G_OPTION_TRN_LANGUAGE}" ;
@@ -3315,7 +3333,7 @@ HERE_DOC
       # TODO We'll check the __FINAL__ generated subtitle file for duplicate styles, as
       # that is probably the most likely bug a user could introduce. TODO
       #
-    msg="$(${GREP} -c "^${C_TRN_TAG_ASS_SCRIPT}" "${transcript_file_in}" 2>&1)" ;
+    msg="$(${GREP} ${GREP_OPTS} -c "^${C_TRN_TAG_ASS_SCRIPT}" "${transcript_file_in}" 2>&1)" ;
     RC=$? ;
     if   [ ${RC} -eq 0 ] ; then  # {
       if [ ${msg} -lt 5 ] ; then  # {
@@ -3542,7 +3560,7 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
       [ "${G_OPTION_VERBOSE}" = 'y' ] && \
         echo "${ATTR_YELLOW_BOLD}FOUND AN SRT SUBTITLE$(tput sgr0).." ;
       set -x ; # We want to KEEP this enabled.
-      "${G_FFMPEG_BIN}" -i "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" \
+      "${G_FFMPEG_BIN}" ${G_FFMPEG_OPT} -i "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" \
                            "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass" \
           >/dev/null 2>&1 ;
       { RC=$? ; set +x ; } >/dev/null 2>&1
@@ -3645,7 +3663,7 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
 
     if [ ${RC} -eq 0 ] ; then  # { If we got a track, determine its TYPE.
 
-      if ( echo "${SUBTITLE_TRACK_CODEC}" | ${GREP} -q 'S_TEXT/ASS' ) ; then  # {
+      if ( echo "${SUBTITLE_TRACK_CODEC}" | "${GREP}" ${GREP_OPTS} -q 'S_TEXT/ASS' ) ; then  # {
         echo "${ATTR_YELLOW_BOLD}  SUBSTATION ALPHA SUBTITLE FOUND IN VIDEO$(tput sgr0) ..." ;
 
         extract_subtitle_track "${G_IN_VIDEO_FILE}" \
@@ -3664,14 +3682,14 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
             "${C_FONTS_DIR}" \
             0 ;
 
-      elif ( echo "${SUBTITLE_TRACK_CODEC}" | ${GREP} -q 'S_TEXT/UTF8' ) ; then  # }{
+      elif ( echo "${SUBTITLE_TRACK_CODEC}" | "${GREP}" ${GREP_OPTS} -q 'S_TEXT/UTF8' ) ; then  # }{
         echo "${ATTR_CYAN_BOLD}  SUBRIP SUBTITLE FOUND IN VIDEO$(tput sgr0) ..." ;
 
         extract_subtitle_track "${G_IN_VIDEO_FILE}" \
             "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" \
             ${G_OPTION_SUBTITLE_TRACK_NUM} ;
 
-        "${G_FFMPEG_BIN}" -i "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" \
+        "${G_FFMPEG_BIN}" ${G_FFMPEG_OPT} -i "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.srt" \
                            "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}.ass" \
             >/dev/null 2>&1 ; RC=$? ;
         { set +x ; } >/dev/null 2>&1
@@ -3727,8 +3745,8 @@ fi  # }
 ###############################################################################
 # HERE-HERE
 ###############################################################################
-#               | ${SED} -e 's#\([][ :,()\x27]\)#\\\\\\\\\\\\\1#g' ;
-#               | ${SED} -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g' ; # NO COMMA
+#     | "${SED}" -e 's#\([][ :,()\x27]\)#\\\\\\\\\\\\\1#g' ;
+#     | "${SED}" -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g' ; # NO COMMA
 #
 FFMPEG_METADATA='' ;
 if [ "${G_OPTION_NO_METADATA}" = '' ] ; then  # {
@@ -3785,21 +3803,21 @@ if [ "${G_SUBTITLE_PATHNAME}" = '' ] ; then  # {
     eval set -- ; # Build an EMPTY eval just to keep the code simple ...
   else
     C_FFMPEG_VIDEO_FILTERS="`echo "${C_VIDEO_PAD_FILTER_FIX}" \
-                | ${SED} -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
+                | "${SED}" -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
                   # NOTE absence of ',' after the ':'
     eval set -- "${C_FFMPEG_VIDEO_FILTERS}" ;
   fi
 else
   G_FFMPEG_SUBTITLE_FILENAME="`echo "${G_SUBTITLE_PATHNAME}" \
-                | ${SED} -e 's#\([][ :,()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
+                | "${SED}" -e 's#\([][ :,()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
   G_FFMPEG_FONTS_DIR="`echo "${C_FONTS_DIR}" \
-                | ${SED} -e 's#\([][ :,()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
+                | "${SED}" -e 's#\([][ :,()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
 
   if [ "${C_VIDEO_PAD_FILTER_FIX}" = '' ] ; then  # {
     eval set -- "subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}" ;
   else  # }{
     C_FFMPEG_VIDEO_FILTERS="`echo "${C_VIDEO_PAD_FILTER_FIX}" \
-                | ${SED} -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
+                | "${SED}" -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
                   # NOTE absence of ',' after the ':'
     eval set -- "${C_FFMPEG_VIDEO_FILTERS},subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}" ;
   fi  # }
@@ -3847,7 +3865,7 @@ if [ ! -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" \
     || [ "${G_OPTION_NO_METADATA}" = 'y' ] ; then  # {
 
     set -x ; # We want to KEEP this enabled.
-    "${G_FFMPEG_BIN}" -i "${G_IN_VIDEO_FILE}" \
+    "${G_FFMPEG_BIN}" ${G_FFMPEG_OPT} -i "${G_IN_VIDEO_FILE}" \
               -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} \
               -c:v libx264 -preset ${C_FFMPEG_PRESET} \
               -crf ${C_FFMPEG_CRF} \
@@ -3868,11 +3886,11 @@ if [ ! -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" \
       G_VIDEO_COMMENT="`cat <<HERE_DOC
 Encoded on ${G_SCRIPT_RUN_DATE}
 $(uname -sr ;
-  "${G_FFMPEG_BIN}" -version \
-     | egrep '^ffmpeg '    \
-     | sed -e 's/version //' -e 's/ Copyright.*//' ;
+  "${G_FFMPEG_BIN}" ${G_FFMPEG_OPT} -version \
+     | ${EGREP} '^ffmpeg '   \
+     | "${SED}" -e 's/version //' -e 's/ Copyright.*//' ;
   add_other_commandline_options ;)
-ffmpeg -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} -c:v libx264 -preset ${C_FFMPEG_PRESET} -crf ${C_FFMPEG_CRF} -tune ${G_OPTION_FFMPEG_TUNE} -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} $(echo $@ | ${SED} -e 's/[\\]//g' -e "s#${HOME}#\\\${HOME}#g" -e 's/ -metadata .*//')
+ffmpeg -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} -c:v libx264 -preset ${C_FFMPEG_PRESET} -crf ${C_FFMPEG_CRF} -tune ${G_OPTION_FFMPEG_TUNE} -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} $(echo $@ | "${SED}" -e 's/[\\]//g' -e "s#${HOME}#\\\${HOME}#g" -e 's/ -metadata .*//')
 HERE_DOC
 `" ;
     else  # }{
@@ -3880,7 +3898,7 @@ HERE_DOC
     fi  # }
 
     set -x ; # We want to KEEP this enabled.
-    "${G_FFMPEG_BIN}" -i "${G_IN_VIDEO_FILE}" \
+    "${G_FFMPEG_BIN}" ${G_FFMPEG_OPT} -i "${G_IN_VIDEO_FILE}" \
               -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} \
               -c:v libx264 -preset ${C_FFMPEG_PRESET} \
               -crf ${C_FFMPEG_CRF} \
