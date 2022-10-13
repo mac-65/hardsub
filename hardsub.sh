@@ -2,7 +2,7 @@
 
 shopt -s lastpipe ; # Needed for 'while read XXX ; do' loops
 
-# 🇭🇦🇷🇩🇸🇺🇧🔹🇸🇭
+# 🇭 🇦 🇷 🇩 🇸 🇺 🇧 🔹 🇸 🇭
 ###############################################################################
 # At some point I'd like to incorporate this logic as command line parameters.
 #
@@ -199,7 +199,8 @@ export ATTR_TOOL="${ATTR_GREEN_BOLD}" ;
 export ATTR_SETTING="`tput bold; tput setaf 184`SETTING" ;
 export ATTR_DISABLE="`tput bold; tput setaf 172`DISABLING" ;
 export ATTR_PRESET="`tput bold; tput setaf 51`SETTING" ;
-export ATTR_SUBTITLE="`tput bold; tput setaf 93`USING" ;
+export ATTR_USING="`tput bold; tput setaf 93`USING" ;
+export ATTR_TRYING="`tput bold; tput setaf 93`TRYING" ;
 export ATTR_NOTICE="`tput bold; tput setaf 44`NOTICE" ;
 export ATTR_NOT_FOUND="`tput bold; tput setaf 198`NOT FOUND" ;
 export ATTR_FFMPEG="`tput bold; tput setaf 196`FFMPEG" ;
@@ -307,10 +308,6 @@ DBG=':' ;
 G_FFMPEG_BIN='/usr/bin/ffmpeg' ;
 G_FFMPEG_OPT='-y -nostdin -hide_banner' ;
 
-FFMPEG='/usr/local/bin/ffmpeg -y -nostdin' ;
-FFMPEG='ffmpeg -y -nostdin -hide_banner' ;
-##-- FFMPEG="${G_FFMPEG_BIN} ${G_FFMPEG_OPT}" ;
-FFMPEG_QUIET='-hide_banner -loglevel info' ; # TODO make this a separate setting
 MKVMERGE='/usr/bin/mkvmerge' ;
 MKVEXTRACT='/usr/bin/mkvextract' ;
 DOS2UNIX='/bin/dos2unix --force' ;
@@ -1290,6 +1287,12 @@ select_subtitle_track_number() {
     ###########################################################################
     # Right now, this logic __only__ supports 'S_TEXT' subtitles (no PGS).
     #
+  if [ "${track_spec}" = 'auto-detect' ] ; then  # {
+     message_tag="${ATTR_TRYING}" ;
+  else  # }{
+     message_tag="${ATTR_USING}" ;
+  fi  # }
+
   if [ "${track_num}" != '' ] ; then  # {
     rc=${track_num} ;
     track_details="$(${MKVMERGE} -i -F json "${in_video}" \
@@ -1299,7 +1302,7 @@ select_subtitle_track_number() {
                   .tracks[${track_num}].properties.language]|@sh")" ;
 
     G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-    printf "  ${ATTR_SUBTITLE} ${ATTR_CLR_BOLD}subtitle track [%d], “${ATTR_YELLOW}%s${ATTR_CLR_BOLD}” " \
+    printf "  ${message_tag} ${ATTR_CLR_BOLD}subtitle track [%d], “${ATTR_YELLOW}%s${ATTR_CLR_BOLD}” " \
            ${track_num} "${track_spec}" ;
     printf "is “${ATTR_GREEN}%s${ATTR_CLR_BOLD}”" "${track_details}" ;
     printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
@@ -1377,6 +1380,8 @@ add_other_commandline_options() {
 # initialize_variables()
 #
 initialize_variables() {
+
+  G_FFMPEG_BIN="$(check_ffmpeg_binary '' 'ffmpeg')" ;
 
   G_OPTION_NO_SUBS='' ;
   G_OPTION_VERBOSE='' ;
@@ -3428,7 +3433,6 @@ do_probe=${rc} ;
   #############################################################################
   # At this point, set which ffmpeg we're going to use ...
   #
-##-- FFMPEG="\"${G_FFMPEG_BIN}\" ${G_FFMPEG_OPT}" ;
 
 (( do_probe )) && probe_video "${G_IN_VIDEO_FILE}" ;
 (( do_probe -= 2 )) || { echo -ne "${G_OPTION_GLOBAL_MESSAGES}" ; exit 0 ; }
@@ -3650,6 +3654,7 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
     select_subtitle_track_number "${G_IN_VIDEO_FILE}"             \
                                   ${G_OPTION_SUBTITLE_TRACK_TYPE} \
                                  "${G_OPTION_SUBTITLE_TRACK}" ; rc=$? ;
+
     if [ ${rc} -eq 255 ] ; then rc=-1 ; fi ;
     G_OPTION_SUBTITLE_TRACK_NUM=${rc} ;
 
@@ -3712,12 +3717,17 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
             1 ;
 
       else  # }{  # FIXME :: print the whole track description
-        # TODO :: add to 'G_OPTION_MESSAGES' instead ...
-        echo -n "  ${ATTR_YELLOW_BOLD}$(tput blink)NOTICE${ATTR_OFF} $(tput bold)-- " ;
-        echo -n "skipping unknown/unsupported "
-        echo -n "$(tput setaf 5)${SUBTITLE_TRACK_CODEC}$(tput sgr0; tput bold) "
-        echo    "subtitle type -- $(tput sgr0)" ;
-        echo    "      <<< '${ATTR_YELLOW}${SUBTITLE_TRACK}$(tput sgr0)' >>>" ;
+        #######################################################################
+        # We'll get __here__ if the subtitle is a PGS subtitle.
+        #
+        # We may add support for these in the furture, which is why we allow
+        # “select_subtitle_track_number()” to return their track number.
+        #
+        G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+        printf "  ${ATTR_YELLOW_BOLD}$(tput blink)NOTICE${ATTR_OFF} $(tput bold)-- " ;
+        printf "skipping unknown/unsupported "
+        printf "“$(tput setaf 5)%s$(tput sgr0; tput bold)” subtitle type -- $(tput sgr0)\\\n" \
+               "${SUBTITLE_TRACK_CODEC}")" ;
       fi  # }
     else  # }{
         #######################################################################
