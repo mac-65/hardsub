@@ -305,7 +305,6 @@ DBG=':' ;
   # If ffmpeg is run in a script w/o the '-nostdin' option, some very strange
   # things and errors can randomly happen ...
   #
-G_FFMPEG_BIN='/usr/bin/ffmpeg' ;
 G_FFMPEG_OPT='-y -nostdin -hide_banner' ;
 
 MKVMERGE='/usr/bin/mkvmerge' ;
@@ -3819,9 +3818,9 @@ if [ "${G_SUBTITLE_PATHNAME}" = '' ] ; then  # {
   fi
 else
   G_FFMPEG_SUBTITLE_FILENAME="`echo "${G_SUBTITLE_PATHNAME}" \
-                | "${SED}" -e 's#\([][ :,()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
+                | "${SED}" -e 's#\([][ |:,()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
   G_FFMPEG_FONTS_DIR="`echo "${C_FONTS_DIR}" \
-                | "${SED}" -e 's#\([][ :,()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
+                | "${SED}" -e 's#\([][ |:,()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
 
   if [ "${C_VIDEO_PAD_FILTER_FIX}" = '' ] ; then  # {
     eval set -- "subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}" ;
