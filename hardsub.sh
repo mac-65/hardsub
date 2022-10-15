@@ -1675,11 +1675,22 @@ font-check:: \
         # TODO :: add a note about this to the comments IF the video really has a transcript
       shift 2;
       ;;
+    --trn-word-time-percent)
+      olde_value="${G_OPTION_TRN_WORD_TIME}" ;
+      clean_arg="$(echo "$2" | "${SED}" -e 's/%$//')"
+      G_OPTION_TRN_WORD_TIME="$(apply_percentage "$1" "${clean_arg}" "${olde_value}" 1)" ;
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          echo -n "  ${ATTR_SETTING} transcript’s per/word time ${ATTR_CLR_BOLD}" ;
+          echo -n "(from ${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_WORD_TIME}" ;
+          printf '%s\\n' "${ATTR_CLR_BOLD} (${clean_arg}%).${ATTR_OFF}")" ;
+        # TODO :: add a note about this to the comments IF the video really has a transcript
+      shift 2;
+      ;;
     --trn-word-time-ms)
       olde_value="${G_OPTION_TRN_WORD_TIME}" ;
       G_OPTION_TRN_WORD_TIME="$(get_option_integer "$1" "$2" ${G_TRN_WORD_TIME_MIN})" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-          echo -n "  ${ATTR_SETTING} transcript’s word time ${ATTR_CLR_BOLD}" ;
+          echo -n "  ${ATTR_SETTING} transcript’s per/word time ${ATTR_CLR_BOLD}" ;
           echo -n "(${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_WORD_TIME}" ;
           printf    "${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
       shift 2;
@@ -1818,7 +1829,7 @@ font-check:: \
 # Look for an embedded CLI in one of two places (in this order):
 # 1. The basename of the dirname of the video + ‘C_EMBEDDED_SUFFIX’ with one
 #    or more “#C” line(s);
-#  OR
+#  AND/OR
 # 2. The basename of the video + ‘C_EMBEDDED_SUFFIX’ with with one or more
 #    “#C” line(s).  This file will be in the ‘C_SUBTITLE_IN_DIR’ and shares
 #    functionality with a transcript.
@@ -1836,7 +1847,9 @@ check_embedded_options() {
 
   if false ; then  # {
     : # TODO :: also allow a '.cli' file to be specified on the command line ..?
-  elif [ -s "${cli_file}" -a -r "${cli_file}" ] ; then  # }{
+  fi  # }
+
+  if [ -s "${cli_file}" -a -r "${cli_file}" ] ; then  # {
 
     G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
       printf "  ${ATTR_ORANGE_BOLD}FOUND -${ATTR_CLR_BOLD} embedded CLI file " ;
@@ -1857,8 +1870,9 @@ check_embedded_options() {
       eval set -- "${cli_options}" ;
       check_getopt 1 "$@" ; # NOTE :: '--do_probe' is effectively ignored
     fi  # }
+  fi  # }
 
-  elif false ; then  # }{
+  if false ; then  # {
     : # TODO :: check in 'C_SUBTITLE_IN_DIR'
   fi  # }
 
@@ -3799,24 +3813,24 @@ fi  # }
 #         since we want to use that mainly for the ffmpeg re-encoding options
 #         and NOT data that is easily viewable with other tools.
 #
-if [ "${G_PRE_VIDEO_FILTER}" != '' ] ; then
-  if [ "${C_VIDEO_PAD_FILTER_FIX}" = '' ] ; then
+if [ "${G_PRE_VIDEO_FILTER}" != '' ] ; then  # {
+  if [ "${C_VIDEO_PAD_FILTER_FIX}" = '' ] ; then  # {
      C_VIDEO_PAD_FILTER_FIX="${G_PRE_VIDEO_FILTER}" ;
-  else
+  else  # }{
      C_VIDEO_PAD_FILTER_FIX="${G_PRE_VIDEO_FILTER},${C_VIDEO_PAD_FILTER_FIX}" ;
-  fi
-fi
+  fi  # }
+fi  # }
 
 if [ "${G_SUBTITLE_PATHNAME}" = '' ] ; then  # {
-  if [ "${C_VIDEO_PAD_FILTER_FIX}" = '' ] ; then
+  if [ "${C_VIDEO_PAD_FILTER_FIX}" = '' ] ; then  # {
     eval set -- ; # Build an EMPTY eval just to keep the code simple ...
-  else
+  else  # }{
     C_FFMPEG_VIDEO_FILTERS="`echo "${C_VIDEO_PAD_FILTER_FIX}" \
                 | "${SED}" -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
                   # NOTE absence of ',' after the ':'
     eval set -- "${C_FFMPEG_VIDEO_FILTERS}" ;
-  fi
-else
+  fi  # }
+else  # }{
   G_FFMPEG_SUBTITLE_FILENAME="`echo "${G_SUBTITLE_PATHNAME}" \
                 | "${SED}" -e 's#\([][ |:,()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
   G_FFMPEG_FONTS_DIR="`echo "${C_FONTS_DIR}" \
