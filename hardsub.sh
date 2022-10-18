@@ -363,7 +363,7 @@ C_FFMPEG_PIXEL_FORMAT='yuvj420p'; # If it does NOT work, go back to 'yuv420p'.
 
 # TODO :: Only build the directories that are actually needed by the re-encode
 C_SUBTITLE_OUT_DIR='./SUBs' ;   # Where to save the extracted subtitle
-C_FONTS_DIR="${HOME}/.fonts" ;  # Where to save the font attachments
+G_FONTS_DIR="${HOME}/.fonts" ;  # Where to save the font attachments
 
 G_OPTION_DRY_RUN='' ;           # Don't run ffmpeg, exit w/a code ...
 G_OPTION_NO_SUBS='' ;           # set to 'y' if '--no-subs' is specified
@@ -1443,7 +1443,7 @@ check_getopt() {
 ##?? G_OPTION_GLOBAL_MESSAGES='' ; # reset for each call to 'check_getopt()'
 
   HS_OPTIONS=`getopt -o dpt::h::vc:f:yq: \
-      --long help::,verbose,config:,fonts-dir:,copy-to:,quality:,\
+      --long help::,verbose,config:,copy-to:,quality:,\
 dry-run,\
 debug,\
 no-subs,\
@@ -1464,7 +1464,9 @@ video-out-dir::,\
 subs-out-dir::,\
 subs-in-dir::,\
 subs-track::,\
+trn-delay-ms::,\
 trn-word-time-ms::,\
+trn-word-time-percent::,\
 trn-is-music,\
 trn-no-words,\
 trn-text-margin::,\
@@ -1480,6 +1482,7 @@ srt-default-font::,\
 srt-italics-font::,\
 srt-font-size-percent::,\
 mono,\
+fonts-directory::,\
 font-check:: \
     -n "${ATTR_ERROR} ${ATTR_BLUE_BOLD}${C_SCRIPT_NAME}${ATTR_YELLOW}" -- "$@"` ;
 
@@ -1566,17 +1569,23 @@ font-check:: \
       C_SUBTITLE_IN_DIR="${new_value}" ;
       shift 2;
       ;;
+    --fonts-directory)
+      new_value="$(check_directory "$1" "$2")" ;
+      add_option_directory_message 'ffmpeg font’s directory' "${C_SUBTITLE_IN_DIR}" "${new_value}" ;
+      G_FONTS_DIR="${new_value}" ;
+      shift 2;
+      ;;
     --font-check)
       font_check_name="$(check_font_name '' "$1" "$2" 0)" ; RC=$? ;
       if [ ${RC} -eq 0 -o ${RC} -eq 2 ] ; then  # {
         if [ "${font_check_name}" = "$2" ] ; then  # {
           printf "  ${ATTR_GREEN_BOLD}FONT CHECK - ${ATTR_OFF}" ;
-          printf "'${ATTR_GREEN}%s${ATTR_CLR_BOLD}' is an exact match " "$2" ;
+          printf "‘${ATTR_GREEN}%s${ATTR_CLR_BOLD}’ is an exact match " "$2" ;
           printf "for the Style's font name\n" ;
         else  # }{
           printf "  ${ATTR_BROWN_BOLD}FONT CHECK - ${ATTR_OFF}" ;
-          printf "'${ATTR_YELLOW}%s${ATTR_OFF}' found; use " "$2" ;
-          printf "'${ATTR_YELLOW}%s${ATTR_OFF}' as the Style's font name\n" \
+          printf "‘${ATTR_YELLOW}%s${ATTR_OFF}’ found; use " "$2" ;
+          printf "‘${ATTR_YELLOW}%s${ATTR_OFF}’ as the Style’s font name\n" \
                  "${font_check_name}" ;
         fi  # }
       fi  # }
@@ -1675,15 +1684,30 @@ font-check:: \
         # TODO :: add a note about this to the comments IF the video really has a transcript
       shift 2;
       ;;
+    --trn-delay-ms)
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          printf "  ${ATTR_NOTICE} “%s”%s\\\\n" "$1" ' is NOT written.')" ;
+      shift 2;
+      ;;
     --trn-word-time-percent)
       olde_value="${G_OPTION_TRN_WORD_TIME}" ;
       clean_arg="$(echo "$2" | "${SED}" -e 's/%$//')"
       G_OPTION_TRN_WORD_TIME="$(apply_percentage "$1" "${clean_arg}" "${olde_value}" 1)" ;
+        #######################################################################
+        # TODO :: FIXME :: The following is a "hack" as the functions that use
+        # 'G_OPTION_TRN_WORD_TIME' do NOT handle a decimal number correctly.
+        # This should be fixed __there__ in those functions.
+        #
+      G_OPTION_TRN_WORD_TIME=${G_OPTION_TRN_WORD_TIME%.*} ; # truncate F.P. #
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
           echo -n "  ${ATTR_SETTING} transcript’s per/word time ${ATTR_CLR_BOLD}" ;
           echo -n "(from ${olde_value})${ATTR_OFF} to ${ATTR_GREEN_BOLD}${G_OPTION_TRN_WORD_TIME}" ;
           printf '%s\\n' "${ATTR_CLR_BOLD} (${clean_arg}%).${ATTR_OFF}")" ;
         # TODO :: add a note about this to the comments IF the video really has a transcript
+        # TODO :: As with 'G_OPTION_MESSAGES', add a COMMENT "collector" variable for
+        #         each type of (say) input.  So, transcript override CLI options
+        #         would be collected in this variable and __only__ written to the
+        #         comments if the encoding was a transcript driver video.  Neat.
       shift 2;
       ;;
     --trn-word-time-ms)
@@ -3151,7 +3175,7 @@ add_transcript_text_to_subtitle() {
 #   The font could exist privately in a location specified by ffmpeg's
 #   'fontsdir=' switch on the encoding command line.  It's way too complex
 #   for any automated benefit to manually look at all of the fonts in the
-#   location specified by 'C_FONTS_DIR', or any unextracted font attachments
+#   location specified by 'G_FONTS_DIR', or any unextracted font attachments
 #   in the source video.
 #
 add_transcript_style_to_subtitle() {
@@ -3466,7 +3490,7 @@ check_and_build_directory '' "${C_SUBTITLE_IN_DIR}" ;
 check_and_build_directory '' "${C_SUBTITLE_OUT_DIR}" ;
 check_and_build_directory '' "${G_VIDEO_OUT_DIR}" ;
 
-check_and_build_directory '' "${C_FONTS_DIR}" ;
+check_and_build_directory '' "${G_FONTS_DIR}" ;
 
   #############################################################################
   # A little hack to speed up testing / development and save temporary files.
@@ -3654,7 +3678,7 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
 
     # so let's see if there are any font
     # attachment(s) in the video.  If there are, then extract those fonts to
-    # the fonts' directory (in 'C_FONTS_DIR') to provide visibility to ffmpeg.
+    # the fonts' directory (in 'G_FONTS_DIR') to provide visibility to ffmpeg.
     #
 
   else  # }{
@@ -3697,7 +3721,7 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
 
         extract_font_attachments \
             "${G_IN_VIDEO_FILE}" \
-            "${C_FONTS_DIR}" \
+            "${G_FONTS_DIR}" \
             0 ;
 
       elif ( echo "${SUBTITLE_TRACK_CODEC}" | "${GREP}" ${GREP_OPTS} -q 'S_TEXT/UTF8' ) ; then  # }{
@@ -3726,7 +3750,7 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
 
         extract_font_attachments \
             "${G_IN_VIDEO_FILE}" \
-            "${C_FONTS_DIR}" \
+            "${G_FONTS_DIR}" \
             1 ;
 
       else  # }{  # FIXME :: print the whole track description
@@ -3801,6 +3825,14 @@ fi  # }
 # a sound reason for why it doesn't, but it makes building '-vf' dynamically
 # quite the tickler.
 #
+# This is/was way more complicated than it should be!
+#
+# https://trac.ffmpeg.org/ticket/5896
+#  https://ffmpeg.org/ffmpeg-utils.html#Quoting-and-escaping
+# https://ffmpeg.org/pipermail/ffmpeg-user/2017-September/037118.html  SOLVED?
+#
+# Also, the number of escapes exceeded the maximum number allowed by code 🤯!
+#
 # Pretty sure no personal info will be added to the video's comments, and
 # you can easily verify that the comment is what you expected using:
 #  - vlc media player => Tools => Media Information or
@@ -3822,6 +3854,7 @@ if [ "${G_PRE_VIDEO_FILTER}" != '' ] ; then  # {
 fi  # }
 
 if [ "${G_SUBTITLE_PATHNAME}" = '' ] ; then  # {
+
   if [ "${C_VIDEO_PAD_FILTER_FIX}" = '' ] ; then  # {
     eval set -- ; # Build an EMPTY eval just to keep the code simple ...
   else  # }{
@@ -3830,11 +3863,26 @@ if [ "${G_SUBTITLE_PATHNAME}" = '' ] ; then  # {
                   # NOTE absence of ',' after the ':'
     eval set -- "${C_FFMPEG_VIDEO_FILTERS}" ;
   fi  # }
+
 else  # }{
+
+    ###########################################################################
+    # This works.  Is there a better, more concise way?  Dunno ...
+    #
+    # There are THREE distinct character types that have to be escaped with a
+    # varying number of '\'s.  I'm actually amazed this all appears to produce
+    # the desired results in ffmpeg, its metadata comments, and libass!
+    #
+    # TODO :: I don't know if there are more cases that need special handling.
+    #
   G_FFMPEG_SUBTITLE_FILENAME="`echo "${G_SUBTITLE_PATHNAME}" \
-                | "${SED}" -e 's#\([][ |:,()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
-  G_FFMPEG_FONTS_DIR="`echo "${C_FONTS_DIR}" \
-                | "${SED}" -e 's#\([][ |:,()\x27]\)#\\\\\\\\\\\\\1#g'`" ;
+                | "${SED}" -e 's#\([ |:()]\)#\\\\\\\\\\\\\1#g' \
+                           -e 's#\([][]\)#\\\\\\\\\\\\\\\\\1#g' \
+                           -e 's#\([,\x27]\)#\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\1#g'`" ;
+  G_FFMPEG_FONTS_DIR="`echo "${G_FONTS_DIR}" \
+                | "${SED}" -e 's#\([ |:()]\)#\\\\\\\\\\\\\1#g' \
+                           -e 's#\([][]\)#\\\\\\\\\\\\\\\\\1#g' \
+                           -e 's#\([,\x27]\)#\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\1#g'`" ;
 
   if [ "${C_VIDEO_PAD_FILTER_FIX}" = '' ] ; then  # {
     eval set -- "subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}" ;
@@ -3844,27 +3892,19 @@ else  # }{
                   # NOTE absence of ',' after the ':'
     eval set -- "${C_FFMPEG_VIDEO_FILTERS},subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}" ;
   fi  # }
+
 fi  # }
 
 # TODO :: description
-ARGs='' ;
-ARG_IDX=0;
-ARG_SPACE=' ';
-for ARG in "$@" ; do
-  (( ARG_IDX++ ));
-  [[ ${ARG_IDX} -eq $# ]] && ARG_SPACE='' ;
-  ARGs="${ARGs}'${ARG}'${ARG_SPACE}";
-done
-
-# TODO :: description
 if [ "${G_POST_VIDEO_FILTER}" != '' ] ; then  # {
-  if [ "${ARGs}" = '' ] ; then
+  if [ $# -eq 0 ] ; then
     FFMPEG_FILTER_COMMA='' ;
   else
     FFMPEG_FILTER_COMMA=',' ;
   fi
 fi  # }
-eval set -- "'-vf' ${ARGs}${FFMPEG_FILTER_COMMA}${G_POST_VIDEO_FILTER}${FFMPEG_METADATA}" ;
+
+eval set -- "-vf $@${FFMPEG_FILTER_COMMA}${G_POST_VIDEO_FILTER}${FFMPEG_METADATA}" ;
 
 # TODO :: description
 G_FFMPEG_AUDIO_CHANNELS='' ;
