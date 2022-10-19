@@ -413,14 +413,34 @@ G_OPTION_TRN_OUTLINE_WEIGHT='2.75' ;   # The outline's weight, 0 "disables" the 
 G_OPTION_TRN_MARGIN=100 ;       # The default left and right text margin
 G_OPTION_TRN_MARGINV=12 ;       # The default vertical margin
 # TODO FIXME 'Open Sans Semibold' does not exist on blackshed, should print a warning
-G_OPTION_TRN_IS_MUSIC='' ;      # If 'y', then the transcript is music lyrics
-G_OPTION_TRN_MUSIC_CHARS='♩♪♫'; # https://www.alt-codes.net/music_note_alt_codes.php
-                                # HI :: If the user specifies '--trn-is-music',
-                                # then a single random musical note character
-                                # will be added before and after each line.  TODO
-                                # SPECIAL NOTE :: libass does not support emoji,
-                                # so using emoji characters may not always work,
-                                # they may get mapped to their "legacy" character.
+
+  #############################################################################
+  # https://www.alt-codes.net/music_note_alt_codes.php
+  #
+  # I was going to support this with a distinct CLI option, but then realized
+  # that this can be easily implemented using the existing sed script
+  # functionality written into 'hardsub.sh'.
+  #
+  # Here's 2 very basic examples:
+  #   s/^/♪ /
+  #   s/$/ ♫/
+  #  This will add '♪ ' to the beginning of each line, and ' ♫' to the end of
+  #  each line.
+  #
+  # Example #2 - suppose you wanted to mix up the end of the line a bit -->
+  #   s/\([aeiouy]\)$/\1 ♫/
+  #   s/\([^♫]\)$/\1 ♪/
+  #  Lines ending in a vowel will get ' ♫'; the remaining lines will get ' ♪'.
+  #
+  # NOTEs:  libass does not render emoji characters.  Using emoji may not work
+  #         at all or may get mapped to their "legacy" monochrome character(s).
+  #       - The development system I use is UTF-8, I don't know how all of this
+  #         will work in other encodings.
+  #       - https://github.com/mpv-player/mpv/issues/9073
+  #       - https://github.com/eosrei/twemoji-color-font
+  #
+G_MUSIC_CHARS='♩♪♫♭♮♯𝄞𝄢';       # (only here as a reference for copy/paste),
+                                # https://en.wikipedia.org/wiki/Musical_Symbols_(Unicode_block)
 G_OPTION_TRN_WC_THRESHOLD=22 ;  # If the line is less than 22 words, we'll re-time
                                 # the 'End' for the line.  Along with the tuning
                                 # provided by 'trn-word-time-ms', this does a
@@ -1425,7 +1445,6 @@ fi
 # I think this makes the command line easier to read and less error prone.
 #
 # FIXME ::
-#  trn-is-music -- mostly a comsetic addition, see its description
 #  trn-no-words -- needed for non-English transcripts which do NOT have word
 #                  spacing (we can't count words, we'll have to count chars
 #                  using ‘wc -m’).
@@ -1467,7 +1486,6 @@ subs-track::,\
 trn-delay-ms::,\
 trn-word-time-ms::,\
 trn-word-time-percent::,\
-trn-is-music,\
 trn-no-words,\
 trn-text-margin::,\
 trn-text-margin-vertical::,\
