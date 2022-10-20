@@ -412,6 +412,7 @@ G_OPTION_TRN_OUTLINECOLOR='00101010' ; # The OutlineColor spec for Transcript su
 G_OPTION_TRN_OUTLINE_WEIGHT='2.75' ;   # The outline's weight, 0 "disables" the outline
 G_OPTION_TRN_MARGIN=100 ;       # The default left and right text margin
 G_OPTION_TRN_MARGINV=12 ;       # The default vertical margin
+G_OPTION_TRN_TEXT_OFFSET_MS=0;  # subtitle text timing offset, --trn-delay-ms
 # TODO FIXME 'Open Sans Semibold' does not exist on blackshed, should print a warning
 
   #############################################################################
@@ -451,7 +452,7 @@ G_OPTION_TRN_WORD_TIME=375 ;    # We'll pick the shorter of the two times:
                                 # - # of words spoken multiplied by this value.
                                 # TODO default the GENRE to 'Transcript' if it's
                                 #      not provided on the command line.
-G_TRN_WORD_TIME_MIN=200 ;       # The minimum value allowed for 'G_OPTION_TRN_WORD_TIME'
+G_TRN_WORD_TIME_MIN=150 ;       # The minimum value allowed for 'G_OPTION_TRN_WORD_TIME'
 G_OPTION_TRN_SED_SCRIPT_DISABLE=0 ; # if 1, don't run any transcript sed script
 G_OPTION_TRN_LANGUAGE='English' ; # default to English, or '--trn-language='
 G_OPTION_TRN_AMERICAN_ENGLISH=1 ; # ...things like Dr., Mr., and Mrs. and so on
@@ -1111,7 +1112,7 @@ get_color_spec() {
 
 
 ###############################################################################
-# get_option_integer  option  value  minimum  [maximum]
+# get_option_integer(option, value, minimum, [maximum])
 #
 get_option_integer() {
   local my_option="$1" ; shift ;
@@ -1130,23 +1131,21 @@ get_option_integer() {
       break ;
     fi  # }
 
-    local re='^[0-9]+$' ; # Simple way to check if string is an integer
+    local re='^[+-]{0,1}[1-9][0-9]*$|^[+-]{0,1}[0-9]$' ; # Gawd, I love regular expressions!
     if ! [[ $in_value =~ $re ]] ; then  # {
       echo >&2 "${ATTR_ERROR} '${my_option}=${in_value}' is not an integer." ;
       break ;
     fi  # }
 
-    # TODO :: check for an octal number (ensure 'value' is normalize to decimal)
+    (( in_value += 0 )) ; # (remove possible '+' character)
 
     if [[ $in_value -lt $in_minimum_value ]] ; then  # {
-      echo >&2 -n "${ATTR_ERROR} '${my_option}=${in_value}', value is too " ;
-      echo >&2    "small (${ATTR_BLUE_BOLD}${in_minimum_value}${ATTR_OFF})." ;
+      echo >&2 "${ATTR_ERROR} '${my_option}=${in_value}', value is too small." ;
       break ;
     fi  # }
 
     if [[ $in_value -gt $in_maximum_value ]] ; then  # {
-      echo >&2 -n "${ATTR_ERROR} '${my_option}=${in_value}', value is too " ;
-      echo >&2    "large (${ATTR_BLUE_BOLD}${in_maximum_value}${ATTR_OFF})." ;
+      echo >&2 "${ATTR_ERROR} '${my_option}=${in_value}', value is too large." ;
       break ;
     fi  # }
 
@@ -1155,8 +1154,14 @@ get_option_integer() {
   done  # }
 
     ###########################################################################
-    # FAILURE :: exit; we've already printed an appropriate error message above
+    # FAILURE :: exit; print the allowed range for this option.
     #
+  printf >&2 "%s%sExpected value should be between %s and %s inclusive.%s\n" \
+             "        " \
+             "${ATTR_CLR_BOLD}" \
+             "${ATTR_BLUE_BOLD}${in_minimum_value}${ATTR_CLR_BOLD}" \
+             "${ATTR_BLUE_BOLD}${in_maximum_value}${ATTR_YELLOW}" \
+             "${ATTR_OFF}" ;
   abort ${FUNCNAME[0]} ${LINENO};
 }
 
@@ -1510,8 +1515,6 @@ font-check:: \
 
   eval set -- "${HS_OPTIONS}" ;
   while true ; do  # {
-    SEP=' ' ;
-
     case "$1" in  # {
     --mono)
       G_OPTION_MONO=1 ; shift ;
@@ -1621,7 +1624,7 @@ font-check:: \
       ;;
     --srt-font-size-percent)
       olde_value="${G_OPTION_SRT_FONT_SIZE}" ;
-      clean_arg="$(echo "$2" | "${SED}" -e 's/%$//')"
+      clean_arg="$(echo "$2" | "${SED}" -e 's/%[ ]*$//')"
       G_OPTION_SRT_FONT_SIZE="$(apply_percentage "$1" "${clean_arg}" "${olde_value}" 1)" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
           echo -n "  ${ATTR_SETTING} SubRip’s font size ${ATTR_CLR_BOLD}" ;
@@ -1693,7 +1696,7 @@ font-check:: \
       ;;
     --trn-font-size-percent)
       olde_value="${G_OPTION_TRN_FONT_SIZE}" ;
-      clean_arg="$(echo "$2" | "${SED}" -e 's/%$//')"
+      clean_arg="$(echo "$2" | "${SED}" -e 's/%[ ]*$//')"
       G_OPTION_TRN_FONT_SIZE="$(apply_percentage "$1" "${clean_arg}" "${olde_value}" 1)" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
           echo -n "  ${ATTR_SETTING} transcript’s font size ${ATTR_CLR_BOLD}" ;
@@ -1703,13 +1706,32 @@ font-check:: \
       shift 2;
       ;;
     --trn-delay-ms)
+        #######################################################################
+        # Transcripts have a 1 second resolution and the text is usually early
+        # with the audio.  A lot can happen in 1 second and it's noticeable
+        # when the text appears too early with the audio.
+        #
+        # This allows the user to uniformly apply an adjustment in milliseconds
+        # to the starting time of each line in the transcript (and of course,
+        # the ending time will change accordingly).  I thought of limiting to
+        # ±1000 milliseconds but, for whatever, will allow ±5000 milliseconds.
+        #
+        # It'd be really kool to have a tool that could indicate a timestamp
+        # when speech starts around each line's timestamp since the error
+        # varies from line to line.  I dunno if there are Linux CLI tools that
+        # can seamlessly do something like that ...
+        #
+      olde_value="${G_OPTION_TRN_TEXT_OFFSET_MS}" ;
+      G_OPTION_TRN_TEXT_OFFSET_MS="$(get_option_integer "$1" "$2" -5000 5000)" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-          printf "  ${ATTR_NOTICE} “%s”%s\\\\n" "$1" ' is NOT written.')" ;
+          echo -n "  ${ATTR_SETTING} transcript’s subtitle delay ${ATTR_CLR_BOLD}" ;
+          echo -n "(from ${olde_value}ms) to ${ATTR_GREEN_BOLD}$2" ;
+          printf    "${ATTR_CLR_BOLD}ms.${ATTR_OFF}\\\n")" ;
       shift 2;
       ;;
     --trn-word-time-percent)
       olde_value="${G_OPTION_TRN_WORD_TIME}" ;
-      clean_arg="$(echo "$2" | "${SED}" -e 's/%$//')"
+      clean_arg="$(echo "$2" | "${SED}" -e 's/%[ ]*$//')"
       G_OPTION_TRN_WORD_TIME="$(apply_percentage "$1" "${clean_arg}" "${olde_value}" 1)" ;
         #######################################################################
         # TODO :: FIXME :: The following is a "hack" as the functions that use
@@ -2876,7 +2898,7 @@ write_a_subtitle_line() {
   subtitle_file_out="$1" ; shift ;
   transcript_sed_script="$1" ; shift ;
   dictionary_sed_script="$1" ; shift ;
-  transcript_line="$1" ; shift ;          # The 'Text' ...
+  transcript_line="$1" ; shift ;          # The 'Text' of the 'Dialogue:' ...
   transcript_style="$1" ; shift ;
   transcript_start_time="$1" ; shift ;
   transcript_end_time="$1" ; shift ;
@@ -2888,6 +2910,7 @@ write_a_subtitle_line() {
     ###########################################################################
     # See if there's a sed script and run FIRST it on the subtitle's 'Text'.
     # Note, we've already vetted the file to see if it's legitimate.
+    #
     # Amazingly, this inefficient way of running sed doesn't cost too much
     # (of course, it depends on the complexity of the actual sed script)!
     #
