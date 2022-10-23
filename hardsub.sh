@@ -1432,7 +1432,7 @@ fi
 ###############################################################################
 ###############################################################################
 ###############################################################################
-# check_getopt(is_cli, ...)
+# Check_getopt(is_cli, ...)
 #
 # TODO :: add a "special" option to indicate that this call is for embedded
 #         options (something that's not easily typed on the keyboard).
@@ -1888,7 +1888,7 @@ font-check:: \
 
 
 ###############################################################################
-# check_embedded_options(in_video)
+# Check_embedded_options(in_video)
 #
 # Look for an embedded CLI in one of two places (in this order):
 # 1. The basename of the dirname of the video + ‘C_EMBEDDED_SUFFIX’ with one
@@ -1903,11 +1903,7 @@ font-check:: \
 # Case 1 is provided for batching a group of input videos.
 #
 check_embedded_options() {
-  local in_video="$1" ; shift ;
-
-  local in_video_dir="$(dirname "${in_video}")" ;
-  local in_video_pwd="$(cd -- "${in_video_dir}/" && /bin/pwd -L)" ;
-  local cli_file="$(basename "${in_video_pwd}")${C_EMBEDDED_SUFFIX}" ;
+  local cli_file="$1" ; shift ;
 
   if false ; then  # {
     : # TODO :: also allow a '.cli' file to be specified on the command line ..?
@@ -2866,8 +2862,9 @@ run_user_sed_script() {
 #                       "${transcript_style}"    \
 #                       "${previous_start_time}" \
 #                       "${previous_end_time}"   \
-#                       "${G_OPTION_TRN_WORD_TIME}" \
-#                       "${G_OPTION_TRN_WC_THRESHOLD}" ;
+#                       ${G_OPTION_TRN_WORD_TIME} \
+#                       ${G_OPTION_TRN_WC_THRESHOLD} \
+#                       ${G_OPTION_TRN_TEXT_OFFSET_MS} ;
 # RETURNS:
 #   0 - no timing adjustments were made;
 #   1 - a timing adjustment was performed.
@@ -2904,6 +2901,7 @@ write_a_subtitle_line() {
   transcript_end_time="$1" ; shift ;
   transcript_word_time="$1" ; shift ;     # Not perfect, but s/b okay ...
   transcript_wc_threshold="$1" ; shift ;
+  transcript_text_offset_ms="$1" ; shift ;
 
   local adjustment_made=0 ;
 
@@ -3133,8 +3131,9 @@ add_transcript_text_to_subtitle() {
                                  "${transcript_style}"       \
                                  "${previous_start_time}"    \
                                  "${previous_end_time}"      \
-                                 "${G_OPTION_TRN_WORD_TIME}" \
-                                 "${G_OPTION_TRN_WC_THRESHOLD}" ;
+                                 ${G_OPTION_TRN_WORD_TIME}   \
+                                 ${G_OPTION_TRN_WC_THRESHOLD} \
+                                 ${G_OPTION_TRN_TEXT_OFFSET_MS} ;
            (( transcript_adjustments += $? )) ;
          fi  # }
 
@@ -3159,8 +3158,9 @@ add_transcript_text_to_subtitle() {
                         "${transcript_style}"       \
                         "${previous_start_time}"    \
                         "${previous_end_time}"      \
-                        "${G_OPTION_TRN_WORD_TIME}" \
-                        "${G_OPTION_TRN_WC_THRESHOLD}" ;
+                        ${G_OPTION_TRN_WORD_TIME}   \
+                        ${G_OPTION_TRN_WC_THRESHOLD} \
+                        ${G_OPTION_TRN_TEXT_OFFSET_MS} ;
   (( transcript_adjustments += $? )) ;
 
   if [ ${skipped_lines} -ne 0 ] ; then
@@ -3505,8 +3505,20 @@ initialize_variables ;
 check_getopt 0 "$@" ; rc=$? ;
 do_probe=${rc} ;
 
-# FIXME :: if there's a embedded CLI file, indicate that we're ignoring it.
-(( G_ALLOW_EMBEDDED_OPTIONS )) && check_embedded_options "${G_IN_VIDEO_FILE}" ;
+  #############################################################################
+  # Look for an embedded CLI file based on the working directory to process ...
+  #
+in_video_dir="$(dirname "${G_IN_VIDEO_FILE}")" ;
+in_video_pwd="$(cd -- "${in_video_dir}/" && /bin/pwd -L)" ;
+cli_file="$(basename "${in_video_pwd}")${C_EMBEDDED_SUFFIX}" ;
+
+if [ -s "${cli_file}" -a -r "${cli_file}" ] ; then  # {
+  if [ ${G_ALLOW_EMBEDDED_OPTIONS} -eq 1 ] ; then  # {
+    check_embedded_options "${cli_file}" ;
+  else  # }{
+    : ; # FIXME :: indicate that we're ignoring the embedded CLI file
+  fi  # }
+fi  # }
 
   #############################################################################
   # At this point, set which ffmpeg we're going to use ...
@@ -3917,13 +3929,13 @@ else  # }{
     # TODO :: I don't know if there are more cases that need special handling.
     #
   G_FFMPEG_SUBTITLE_FILENAME="`echo "${G_SUBTITLE_PATHNAME}" \
-                | "${SED}" -e 's#\([ |:()]\)#\\\\\\\\\\\\\1#g' \
+                | "${SED}" -e 's#\([ |()]\)#\\\\\\\\\\\\\1#g' \
                            -e 's#\([][]\)#\\\\\\\\\\\\\\\\\1#g' \
-                           -e 's#\([,\x27]\)#\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\1#g'`" ;
+                           -e 's#\([:,\x27]\)#\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\1#g'`" ;
   G_FFMPEG_FONTS_DIR="`echo "${G_FONTS_DIR}" \
-                | "${SED}" -e 's#\([ |:()]\)#\\\\\\\\\\\\\1#g' \
+                | "${SED}" -e 's#\([ |()]\)#\\\\\\\\\\\\\1#g' \
                            -e 's#\([][]\)#\\\\\\\\\\\\\\\\\1#g' \
-                           -e 's#\([,\x27]\)#\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\1#g'`" ;
+                           -e 's#\([:,\x27]\)#\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\1#g'`" ;
 
   if [ "${C_VIDEO_PAD_FILTER_FIX}" = '' ] ; then  # {
     eval set -- "subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}" ;
