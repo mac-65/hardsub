@@ -3997,15 +3997,17 @@ if [ ! -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" \
       # NOTE -- this has to be done here because we need to evaluate "$@"
       #         to get the remaining ffmpeg options ...
       #
+    G_ARCH="$(uname -sr)" ;
+    G_BUILD_ARCH="${G_ARCH} ➕ $("${G_FFMPEG_BIN}" ${G_FFMPEG_OPT} -version \
+          | ${EGREP} '^ffmpeg '   \
+          | "${SED}" -e 's/version //' -e 's/ Copyright.*//' ; \
+          add_other_commandline_options ;)" ;
+
     G_VIDEO_COMMENT='' ;
     if [ "${C_METADATA_COMMENT}" = '' ] ; then  # {
       G_VIDEO_COMMENT="`cat <<HERE_DOC
 Encoded on ${G_SCRIPT_RUN_DATE}
-$(uname -sr ;
-  "${G_FFMPEG_BIN}" ${G_FFMPEG_OPT} -version \
-     | ${EGREP} '^ffmpeg '   \
-     | "${SED}" -e 's/version //' -e 's/ Copyright.*//' ;
-  add_other_commandline_options ;)
+${G_BUILD_ARCH}
 ffmpeg -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} -c:v libx264 -preset ${C_FFMPEG_PRESET} -crf ${C_FFMPEG_CRF} -tune ${G_OPTION_FFMPEG_TUNE} -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} $(echo $@ | "${SED}" -e 's/[\\]//g' -e "s#${HOME}#\\\${HOME}#g" -e 's/ -metadata .*//')
 HERE_DOC
 `" ;
