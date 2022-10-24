@@ -1480,6 +1480,7 @@ probe-only,\
 ffmpeg::,\
 cli::,\
 title::,\
+artist::,\
 genre::,\
 tune::,\
 preset::,\
@@ -1557,8 +1558,8 @@ font-check:: \
     --debug)
       if ! [ "${G_OPTION_DEBUG}" = 'y' ] ; then  # {
         G_OPTION_GLOBAL_MESSAGES="${G_OPTION_GLOBAL_MESSAGES}$(\
-          printf "  ${ATTR_YELLOW_BOLD}DEBUG RUN - ${ATTR_OFF}%s\\\n" \
-                 'ffmpeg will run with very fast, low quality settings')" ;
+          printf "  ${ATTR_YELLOW_BOLD}DEBUG RUN - ${ATTR_CLR_BOLD}%s${ATTR_OFF}\\\n" \
+                 'ffmpeg encoding set to very fast, low quality settings.')" ;
       fi  # }
       G_OPTION_DEBUG='y' ; shift ;
       ;;
@@ -1803,7 +1804,15 @@ font-check:: \
     --title|-t)
       G_OPTION_TITLE="$(get_option_string "$1" "$2")" ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-          printf "  ${ATTR_SETTING} video’s metadata title to " ;
+          printf "  ${ATTR_SETTING} video’s metadata “title” to " ;
+          printf "${ATTR_CLR_BOLD}'${ATTR_GREEN_BOLD}%s${ATTR_CLR_BOLD}'.\\\n" \
+                 "$2")" ;
+      shift 2;
+      ;;
+    --artist)
+      G_OPTION_ARTIST="$(get_option_string "$1" "$2")" ;
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          printf "  ${ATTR_SETTING} video’s metadata “artist” to " ;
           printf "${ATTR_CLR_BOLD}'${ATTR_GREEN_BOLD}%s${ATTR_CLR_BOLD}'.\\\n" \
                  "$2")" ;
       shift 2;
@@ -1902,18 +1911,17 @@ font-check:: \
 #
 # Case 1 is provided for batching a group of input videos.
 #
+# QQQQ :: TODO :: check for other '#Options' here (e.g. #H) ..?
+#
 check_embedded_options() {
   local cli_file="$1" ; shift ;
+  local cli_source=$1 ; shift ; # 0 = .cli file; 1 is from a transcript file
 
   if false ; then  # {
     : # TODO :: also allow a '.cli' file to be specified on the command line ..?
   fi  # }
 
   if [ -s "${cli_file}" -a -r "${cli_file}" ] ; then  # {
-
-    G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-      printf "  ${ATTR_ORANGE_BOLD}FOUND -${ATTR_CLR_BOLD} embedded CLI file " ;
-      printf "‘${ATTR_YELLOW}%s${ATTR_CLR_BOLD}’ ...\\\n" "${cli_file}")" ;
 
     local cli_options='' ; # We also allow trailing comments on the lines.
     "${GREP}" ${GREP_OPTS} "^${C_TRN_TAG_EMBEDDED_CLI}[ ]" "${cli_file}" \
@@ -1923,12 +1931,35 @@ check_embedded_options() {
  
          cli_options="${cli_options} ${cli_line}" ;
 
+         # QQQQ :: TODO :: check for other '#Options' here (e.g. #H) ..?
+
       done  # }
       ${DBG} printf 'DEBUG :: ‘%s’\n' "${cli_options}" ;
 
     if [ "${cli_options}" != '' ] ; then  # {
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+        printf "  ${ATTR_ORANGE_BOLD}FOUND -${ATTR_CLR_BOLD} embedded CLI options in " ;
+        printf "‘${ATTR_YELLOW}%s${ATTR_CLR_BOLD}’ ...${ATTR_OFF}\\\n" "${cli_file}")" ;
+
+        #######################################################################
+        # If we can't 'eval' the string, the best we can do is quit the script.
+        #
+        # This usually happens if an option's argument is not properly escaped.
+        # And example might be --title="This is a "test"".  It needs to appear
+        # as --title="this is a \\\"test\\\"".  If the option's argument is
+        # enclosed in single quotes, then no escaping is required, e.g. -->
+        # --title='this is a "test"'.
+        #
+        # I don't think there's an easy to auto-escape this quoting process as
+        # it'd be difficult to tell when a character needs escaping given how
+        # the eval string is built from the transcript file.  An inconvenience.
+        #
       eval set -- "${cli_options}" ;
+        if [ $? -ne 0 ] ; then abort ${FUNCNAME[0]} ${LINENO}; fi ;
       check_getopt 1 "$@" ; # NOTE :: '--do_probe' is effectively ignored
+    else  # }{
+      : ; # if it's EMPTY, make a note in G_OPTION_MESSAGES only
+          # if it was a '.cli' file (and not a transcript file).
     fi  # }
   fi  # }
 
@@ -1937,7 +1968,21 @@ check_embedded_options() {
   fi  # }
 
   { set +x ; } >/dev/null 2>&1
-  tput sgr0 ;
+}
+
+
+###############################################################################
+# Check_transcript_embedded_options(transcript_files ...)
+#
+check_transcript_embedded_options() {
+    ###########################################################################
+    #
+    #
+  while [ $# -gt 0 ] ; do  # {
+    local transcript_file_in="$1" ; shift ;
+
+    check_embedded_options "${transcript_file_in}" 1 ;
+  done ;  # }
 }
 
 
@@ -2107,6 +2152,47 @@ get_video_genre() {
   # TODO :: Do I also need to escape any ',' character(s) in the genre?
   #
   echo "$(echo "${out_genre}" | "${SED}" -e 's#\([\x27]\)#\1"\1"\1#g')" ;
+}
+
+
+###############################################################################
+###############################################################################
+#
+get_video_artist() {
+  local in_filename="$1" ; shift ;
+  local in_artist="$1" ; shift ;
+  local in_default_artist="$1" ; shift ;
+
+  local out_artist='' ; # The default if 'Artist' IS set in the video
+
+  if [ "${in_artist}" != '' ] ; then  # {
+
+    out_artist="${in_artist}" ; # The artist is explicitly set by the user
+
+  else  # }{
+
+    # TODO :: See if the '^Title' contains the Artist FIXME
+    #         ALSO, will need to patch-up 'get_video_title()' for same changes
+    local artist_in_video="$(${EXIFTOOL} "${in_filename}" \
+                     | "${GREP}" ${GREP_OPTS} '^Artist' \
+                     | "${SED}" -e 's/^.*: //')" ;
+    if [ "${artist_in_video}" = '' ] ; then  # {
+        #######################################################################
+        # There is no Artist in the video, so use the default.
+        #
+      out_artist="${in_default_artist}" ;
+    else  # }{
+        #######################################################################
+      : # Artist IS set in the video, ffmpeg will copy it while re-encoding.
+        #
+    fi  # }
+  fi  # }
+
+  #############################################################################
+  # Ensure that any single quotes are escaped.  FIXME should be done elsewhere?
+  # TODO :: Do I also need to escape any ',' character(s) in the genre?
+  #
+  echo "$(echo "${out_artist}" | "${SED}" -e 's#\([\x27]\)#\1"\1"\1#g')" ;
 }
 
 
@@ -3038,6 +3124,10 @@ add_transcript_text_to_subtitle() {
     #   > a clever trick (discovered by accident) -->
     #     sed 's/^#[^#]*//' without the end anchor ('$') produces identical
     #     results to sed -e 's/^#[^#]*$//' -e 's/^##/#/'.
+    #     My "clever" trick was borked, so I had to fix it!
+    #     A line like -
+    #         '#C --artist='History_S01E03' # knida like author, amiright?'
+    #     only removed the 1st part leaving '# knida like author, amiright?'
     # - sed to trim the line of leading / trailing SPACEs; and
     # - skip any EMPTY lines (these are identified by adjacent timestamps).
     # - allow pass-thru comments beginning with '##', i.e. these will be
@@ -3063,7 +3153,7 @@ add_transcript_text_to_subtitle() {
   local start_of_transcript_lineno=0 ;
 
   cat "${transcript_file_in}"                   \
-    | "${SED}" -e 's/^#[^#]*//'                 \
+    | "${SED}" -e 's/^#[A-Z][[:space:]].*$//'   \
                -e 's/^exit[[:space:]]*[0]*.*//' \
                -e 's/^[[:space:]]*//'           \
                -e 's/[[:space:]]*$//'           \
@@ -3181,7 +3271,7 @@ add_transcript_text_to_subtitle() {
 
 
 ###############################################################################
-# add_transcript_style_to_subtitle  subtitle_file_out  transcript_file_in
+# Add_transcript_style_to_subtitle  subtitle_file_out  transcript_file_in
 #
 # RETURNS: name of the __last__ style that was read from the transcript file,
 #          0 if style's font was found with fonconfig, 1 otherwise.
@@ -3274,7 +3364,7 @@ add_transcript_style_to_subtitle() {
 
 
 ###############################################################################
-# convert_transcripts_to_ass "${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" \
+# Convert_transcripts_to_ass "${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" \
 #                             G_TRN_SED_SCRIPT                            \
 #                             C_SED_DICTIONARY_BASENAME                   \
 #                             ${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}*.txt
@@ -3324,15 +3414,17 @@ convert_transcripts_to_ass() {
   local subtitle_file_out="$1" ; shift ;
   local transcript_sed_script="$1" ; shift ;
   local sed_dictionary_basename="$1" ; shift ;
+  local transcript_file_in='…' ; # /transcript_file_in
 
   local default_style='Transcript' ;
 
   RC=0 ;
 
     ###########################################################################
+    ###########################################################################
     # If the subtitle file's already there and is not EMPTY, don't do anything.
     #
-  [ -s "${subtitle_file_out}" ] && return 0 ;
+  [ -s "${subtitle_file_out}" ] && return ${RC} ;
 
   msg="$(touch "${subtitle_file_out}" 2>&1)" ; RC=$? ; # 'local msg' is borked?
   if [ ${RC} -ne 0 ] ; then  # {
@@ -3377,12 +3469,13 @@ HERE_DOC
   local number_of_transcript_files=$# ;
 
   while [ $# -gt 0 ] ; do  # {
-    local transcript_file_in="$1" ; shift ;
+          transcript_file_in="$1" ; shift ;
     local transcript_style="${default_style}" ;
 
     local transcript_language="$(${GREP} ${GREP_OPTS} "^${C_TRN_TAG_LANGUAGE}" \
                                          "${transcript_file_in}"  \
                                | "${TAIL}" -1 | "${CUT}" -d' ' -f2)" ;
+
     if [ "${transcript_language}" = '' \
         -a ${number_of_transcript_files} -eq 1 ] ; then  # {
       transcript_language="${G_OPTION_TRN_LANGUAGE}" ;
@@ -3391,6 +3484,7 @@ HERE_DOC
     local transcript_language_desc="$([ "${transcript_language}" = '' ] \
             && echo '' || echo "${transcript_language} language ")" ;
 
+    # QQQQ :: FIXME :: TODO :: this is not being printed !!! ??? ADD to MESSAGES?
     printf "  ${ATTR_YELLOW_BOLD}PROCESSING - "
     printf "${ATTR_BLUE_BOLD}%s${ATTR_CLR_BOLD}" "${transcript_language_desc}" ;
     printf "${ATTR_CLR_BOLD}transcript file " ;
@@ -3420,7 +3514,7 @@ HERE_DOC
     RC=$? ;
     if   [ ${RC} -eq 0 ] ; then  # {
       if [ ${msg} -lt 5 ] ; then  # {
-        echo 'WARNING -- too few Style: line were found ..?' ;
+        echo 'WARNING -- too few Style: line were found ..?' ; # FIXME :: add to MESSAGES
       fi  # }
       (( number_of_embedded_styles++ ))
       local style_in="$(add_transcript_style_to_subtitle \
@@ -3514,9 +3608,9 @@ cli_file="$(basename "${in_video_pwd}")${C_EMBEDDED_SUFFIX}" ;
 
 if [ -s "${cli_file}" -a -r "${cli_file}" ] ; then  # {
   if [ ${G_ALLOW_EMBEDDED_OPTIONS} -eq 1 ] ; then  # {
-    check_embedded_options "${cli_file}" ;
+    check_embedded_options "${cli_file}" 0 ;
   else  # }{
-    : ; # FIXME :: indicate that we're ignoring the embedded CLI file
+    : ; # FIXME :: indicate that we're ignoring the embedded CLI file  QQQQ
   fi  # }
 fi  # }
 
@@ -3622,6 +3716,8 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
 
     { set +x ; } >/dev/null 2>&1 ;
     tput sgr0 ;
+
+    check_transcript_embedded_options "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}"*.txt ;
 
     C_SED_DICTIONARY_BASENAME="${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}" ;
     convert_transcripts_to_ass "${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" \
@@ -3855,6 +3951,12 @@ if [ "${G_OPTION_NO_METADATA}" = '' ] ; then  # {
   if [ "${G_METADATA_TITLE}" != '' ] ; then  # {
     ## TODO :: split the artist / title here?
     FFMPEG_METADATA=" '-metadata' 'title=${G_METADATA_TITLE}'" ;
+  fi  # }
+
+  G_METADATA_ARTIST="$(get_video_artist "${G_IN_VIDEO_FILE}" "${G_OPTION_ARTIST}" "${G_IN_BASENAME}")" ;
+  if [ "${G_METADATA_ARTIST}" != '' ] ; then  # {
+    ## TODO :: split the artist / title here?
+    FFMPEG_METADATA="${FFMPEG_METADATA} '-metadata' 'artist=${G_METADATA_ARTIST}'" ;
   fi  # }
 
   G_METADATA_GENRE="$(get_video_genre "${G_IN_VIDEO_FILE}" "${G_OPTION_GENRE}" "${C_DEFAULT_GENRE}")" ;
