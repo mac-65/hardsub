@@ -666,13 +666,57 @@ my_usage() {
 
 
 ###############################################################################
+# Check_max_video_width(input_video, max_video_width)
+#
+# Checks the width of the input video.  If the width is greater than the
+# 'max_video_width' argument, will build the appropriate ffmpeg video filter
+# option to limit the size of the video during its re-encoding.
+#
+# RETURNS :: G_STRING
+#   We use a global for the return value so that we can add to the
+#   G_OPTION_MESSAGES in scope.
+#
+check_max_video_width() {
+  local input_video="$1" ; shift ;
+  local max_video_width=$1 ; shift ;
+
+    ###########################################################################
+    # We'll __only__ scale down this video if we detect that it is over a
+    # specific size threshold.  Some devices will NOT scale down a video if it
+    # is too big.  Otherise, we won't change the video resolution.
+    #
+    # We'll only check the width - that should be enough.
+    #
+  local video_width="$("${G_FFMPEG_BIN}" ${G_FFMPEG_OPT} -i "${input_video}" 2>&1 \
+        | "${GREP}" ${GREP_OPTS} 'Stream.*Video' \
+        | "${GREP}" ${GREP_OPTS} -o '[1-9][0-9]*x[1-9][0-9]* ' \
+        | "${CUT}" -dx -f1)" ;
+
+  G_STRING='' ;
+  if [ "${video_width}" != '' ] ; then  # {
+    if [ ${video_width} -gt ${max_video_width} ] ; then  # {
+      G_STRING="$(printf 'scale=%d:-1' ${max_video_width})" ;
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          printf "  ${ATTR_NOTE} ${ATTR_BOLD}limiting video’s " ;
+          printf "encoding to a maximum width of “%d” pixels.\\\n" \
+                 ${max_video_width})" ;
+    fi  # }
+  else  # }{
+    : ; # TODO :: is this an ERROR?
+  fi  # }
+
+  return ;
+}
+
+
+###############################################################################
+# Configure_preset(input_video, preset_name)
+#
 # Configure a preset.
 #
-# A preset is a static set of configuration(s) that you may want to always
+# A "preset" is a static set of configuration(s) that you may want to always
 # apply to a specific playback device.  Examples might include always scaling
 # the video to the device's screen size, or other re-encoding attributes.
-#
-# FIXME :: need a G_OPTION_MESSAGES message for the preset
 #
 configure_preset() {
   local input_video="$1" ; shift ;
@@ -728,27 +772,20 @@ configure_preset() {
         #
       G_ZTE_FIX_FILENAMES=1 ; # TODO :: A marker for future improvement(s).
       ;;
-    Samsung|1920)
+    Samsung|1920|1080p)
         #######################################################################
-        # We'll __only__ scale down this video if we detect that it is over a
+        # We'll __only__ scale down a video if we detect that it is over a
         # specific size threshold.  Some devices will NOT scale down a video
-        # if it is too big.  Otherise, we won't change the video resolution.
+        # if it is too big (e.g., my Samsung TV).
         #
-        # We'll only check the width - that should be enough.
+        # Otherise, we won't change the video resolution.
         #
-      local video_width="$("${G_FFMPEG_BIN}" ${G_FFMPEG_OPT} -i "${input_video}" 2>&1 \
-            | "${GREP}" ${GREP_OPTS} 'Stream.*Video' \
-            | "${GREP}" ${GREP_OPTS} -o '[1-9][0-9]*x[1-9][0-9]* ' \
-            | "${CUT}" -dx -f1)" ;
-
-      if [ "${video_width}" != '' ] ; then  # {
-        if [ ${video_width} -gt 1920 ] ; then  # {
-          G_PRE_VIDEO_FILTER='scale=1920:-1' ;
-          G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
-              printf "  ${ATTR_NOTE} ${ATTR_BOLD}limiting video’s " ;
-              printf "encoding to a maximum width of “1920” pixels.\\\n")" ;
-        fi  # }
-      fi  # }
+      check_max_video_width "${input_video}" 1920 ;
+      G_PRE_VIDEO_FILTER="${G_STRING}" ;
+      ;;
+    tablet|1280|720p)
+      check_max_video_width "${input_video}" 1280 ;
+      G_PRE_VIDEO_FILTER="${G_STRING}" ;
       ;;
     *)
       echo "${ATTR_ERROR} ${ATTR_BOLD}unrecognized “preset='${my_preset}'”" ;
@@ -1879,7 +1916,7 @@ font-check:: \
     # - see if the user wants to probe its tracks ...
     #
   if ! [ -s "${G_IN_VIDEO_FILE}" ] ; then
-    printf "${ATTR_ERROR} ${ATTR_BOLD}‘${ATTR_YELLOW_BOLD}%s${ATTR_CLR_BOLD}’\n" \
+    printf "${ATTR_ERROR} ${ATTR_BOLD}‘${ATTR_YELLOW}%s${ATTR_CLR_BOLD}’\n" \
            "${G_IN_VIDEO_FILE}" ;
     printf "        ${ATTR_RED_BOLD}%s${ATTR_OFF}\n" \
            'Is not there, is an EMPTY file, or is a broken link.' ;
@@ -2180,7 +2217,7 @@ get_video_artist() {
         #######################################################################
         # There is no Artist in the video, so use the default.
         #
-      out_artist="${in_default_artist}" ;
+      out_artist="${in_default_artist}" ; # TODO :: do something different?
     else  # }{
         #######################################################################
       : # Artist IS set in the video, ffmpeg will copy it while re-encoding.
@@ -3953,7 +3990,7 @@ if [ "${G_OPTION_NO_METADATA}" = '' ] ; then  # {
     FFMPEG_METADATA=" '-metadata' 'title=${G_METADATA_TITLE}'" ;
   fi  # }
 
-  G_METADATA_ARTIST="$(get_video_artist "${G_IN_VIDEO_FILE}" "${G_OPTION_ARTIST}" "${G_IN_BASENAME}")" ;
+  G_METADATA_ARTIST="$(get_video_artist "${G_IN_VIDEO_FILE}" "${G_OPTION_ARTIST}" '')" ;
   if [ "${G_METADATA_ARTIST}" != '' ] ; then  # {
     ## TODO :: split the artist / title here?
     FFMPEG_METADATA="${FFMPEG_METADATA} '-metadata' 'artist=${G_METADATA_ARTIST}'" ;
@@ -4101,7 +4138,7 @@ if [ ! -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" \
       #
     G_ARCH="$(uname -sr)" ;
     G_BUILD_ARCH="${G_ARCH} ➕ $("${G_FFMPEG_BIN}" ${G_FFMPEG_OPT} -version \
-          | ${EGREP} '^ffmpeg '   \
+          | "${GREP}" ${GREP_OPTS} '^ffmpeg '   \
           | "${SED}" -e 's/version //' -e 's/ Copyright.*//' ; \
           add_other_commandline_options ;)" ;
 
