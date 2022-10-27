@@ -376,10 +376,17 @@ G_ALLOW_EMBEDDED_OPTIONS=1 ;    # search for embedded options
 G_OPTION_NO_MODIFY_ASS='' ;     # TODO write_me + getopt
 G_OPTION_ASS_SCRIPT=''    ;     # TODO write_me + getopt
 G_OPTION_FFMPEG_TUNE='film' ;   # default for ffmpeg's -tune option
+
 G_OPTION_SUBTITLE_TRACK='first' ; # This is the default subtitle track to burn
 G_OPTION_SUBTITLE_TRACK_TYPE=0; # (tightly coupled w/G_OPTION_SUBTITLE_TRACK)
 G_OPTION_SUBTITLE_TRACK_NUM=-1; # (tightly coupled w/G_OPTION_SUBTITLE_TRACK)
 G_OPTION_SUBTITLE_TRACK_SET=0 ; # (tightly coupled w/G_OPTION_SUBTITLE_TRACK)
+
+G_OPTION_AUDIO_STREAM='first' ; # default audio stream to encode
+G_OPTION_AUDIO_STREAM_TYPE=0 ;  # (tightly coupled w/G_OPTION_AUDIO_STREAM)
+G_OPTION_AUDIO_STREAM_NUM=0 ;   # (tightly coupled w/G_OPTION_AUDIO_STREAM)
+G_OPTION_AUDIO_STREAM_SET=0 ;   # (tightly coupled w/G_OPTION_AUDIO_STREAM)
+
 G_OPTION_NO_FUZZY='' ;          # if set to 'y', then do't use 'agrep' to test
                                 # the Title in the video file.
 G_OPTION_VERBOSE='' ;           # set to 'y' if '--verbose' is specified to
@@ -1204,15 +1211,15 @@ get_option_integer() {
 
 
 ###############################################################################
-# get_option_subtitle_track  option  value
+# Get_option_track_or_stream(option, value)
 #
-# Get an option's track specification.
+# Get an option's track specification, either the subtitle or audio stream.
 #
 # We won't be able to validate this until we actually look at the tracks
 # using mkvmerge (that is, if the user specifies track 1 for the subtitle,
 # that track must be a text subtitle, not a video or audio track).
 #
-get_option_subtitle_track() {
+get_option_track_or_stream() {
   local my_option="$1" ; shift ;
   local in_value="$1" ; shift ;
 
@@ -1268,7 +1275,7 @@ get_option_string() {
 
 
 ###############################################################################
-# select_subtitle_track_number(in_video, track_type, track_spec)
+# Select_subtitle_track_number(in_video, track_type, track_spec)
 #
 # Get the track number of the subtitle specified.
 #
@@ -1525,7 +1532,6 @@ out-dir::,\
 video-out-dir::,\
 subs-out-dir::,\
 subs-in-dir::,\
-subs-track::,\
 trn-delay-ms::,\
 trn-word-time-ms::,\
 trn-word-time-percent::,\
@@ -1542,6 +1548,8 @@ trn-disable-sed,\
 srt-default-font::,\
 srt-italics-font::,\
 srt-font-size-percent::,\
+subs-track::,\
+audio-stream::,\
 mono,\
 fonts-directory::,\
 font-check:: \
@@ -1671,9 +1679,21 @@ font-check:: \
         # TODO :: add a note about this to the comments IF the video really has SubRip subtitles
       shift 2;
       ;;
+    --audio-stream)
+      olde_value="${G_OPTION_AUDIO_STREAM}" ;
+      G_OPTION_AUDIO_STREAM="$(get_option_track_or_stream "$1" "$2")" ; RC=$? ;
+      G_OPTION_AUDIO_STREAM_TYPE=${RC} ;
+      G_OPTION_AUDIO_STREAM_SET=1 ;
+      G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
+          echo -n "  ${ATTR_SETTING} audio stream # filter ${ATTR_CLR_BOLD}" ;
+          echo -n "(from “${ATTR_OLIVE_BOLD}${olde_value}${ATTR_CLR_BOLD}”)"
+          echo -n " ${ATTR_YELLOW_BOLD}to “${ATTR_GREEN_BOLD}${G_OPTION_AUDIO_STREAM}" ;
+          printf    "${ATTR_YELLOW_BOLD}”${ATTR_CLR_BOLD}.${ATTR_OFF}\\\n")" ;
+      shift 2;
+      ;;
     --subs-track)
-      olde_value="${G_OPTION_SUBTITLE_TRACK}" ; # WWWW
-      G_OPTION_SUBTITLE_TRACK="$(get_option_subtitle_track "$1" "$2")" ; RC=$? ;
+      olde_value="${G_OPTION_SUBTITLE_TRACK}" ;
+      G_OPTION_SUBTITLE_TRACK="$(get_option_track_or_stream "$1" "$2")" ; RC=$? ;
       G_OPTION_SUBTITLE_TRACK_TYPE=${RC} ;
       G_OPTION_SUBTITLE_TRACK_SET=1 ;
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
@@ -3976,10 +3996,7 @@ fi  # }
 
 
 ###############################################################################
-# HERE-HERE
 ###############################################################################
-#     | "${SED}" -e 's#\([][ :,()\x27]\)#\\\\\\\\\\\\\1#g' ;
-#     | "${SED}" -e 's#\([][ :()\x27]\)#\\\\\\\\\\\\\1#g' ; # NO COMMA
 #
 FFMPEG_METADATA='' ;
 if [ "${G_OPTION_NO_METADATA}" = '' ] ; then  # {
