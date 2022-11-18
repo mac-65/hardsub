@@ -1317,14 +1317,17 @@ select_subtitle_track_number() {
     ;;
 
   2) # An egrep regx
-    which_cmd='head -1' ; # ... someday, configurable?
+    which_cmd='head -1' ; # WISH ... someday, configurable?
     track_found="$(${MKVMERGE} -i -F json "${in_video}" \
-        | jq '.tracks[]'           \
+        | jq '.tracks[]' \
         | jq -r "[.id, .type, .properties.codec_id, \
                   .properties.track_name, .properties.language]|@sh" \
-        | ${EGREP} "${track_spec}" \
+        | "${GREP}" ${GREP_OPTS} "'subtitles'" \
+        | "${GREP}" -E ${GREP_OPTS} "${track_spec}" \
         | ${which_cmd})" ;
-    ${DBG} printf "  ${ATTR_RED}%s\n" "${track_found}"
+
+    ${DBG} printf "  ${ATTR_RED}%s${ATTR_OFF}\n" "${track_found}"
+
     track_num="$(printf '%s' "${track_found}" | "${CUT}" -d' ' -f1)" ;
     if [ "${track_num}" = '' ] ; then
       G_OPTION_MESSAGES="${G_OPTION_MESSAGES}$(\
@@ -3906,7 +3909,7 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
           | jq -r ".tracks[${G_OPTION_SUBTITLE_TRACK_NUM}].properties.codec_id")" ;
       RC=$? ;
     else  # }{
-      RC=3 ;
+      RC=3 ; # ???
     fi  # }
 
     if [ ${RC} -eq 0 ] ; then  # { If we got a track, determine its TYPE.
