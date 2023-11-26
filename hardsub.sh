@@ -66,12 +66,15 @@ fi
 
 
 ###############################################################################
-# NOTE + TODO:
+# NOTEs + TODO:
 # - Is this what's happening to the older videos?
 #   https://forum.videohelp.com/threads/397242-FFMPEG-Interlaced-MPEG2-video-to-x264-Issue
 #
 # - for transcripts -- doesn't tell user that ASS file is already there
 #   (okay, but would like to see a message)
+#
+# - an option to keep any non-empty title in the source video (i.e., do NOT
+#   overwrite w/filename of input video).  This is for U-tube videos, et. al.
 #
 # - minor :: display the font's use-name when extracting the font file.
 #
@@ -97,6 +100,41 @@ fi
 #   Supported pixel formats: yuv420p yuvj420p yuv422p yuvj422p yuv444p yuvj444p
 #                            nv12 nv16 nv21 yuv420p10le yuv422p10le yuv444p10le
 #                            nv20le gray gray10le
+#
+# - Add the same feature set for transcript font attributes
+#   (trn-font-primarycolor, et. al.) for fonts used for a SRT subtitle file
+#   either as an attachment in the video, or external to the video).  s/b easy.
+#
+#
+# - if there is NO start (or initial start time) in a transcript file, the
+#   line will persist for the whole video --
+#   'Everything Wrong With The ENTIRE Star Trek Original Series Films Franchise.mp4'
+#
+# - kf5-config --version ; plasmashell --version  <<===  should I add?
+#   NO!  Would not necessarily make sense on non-KDE architectures.
+#
+# - Be KOOL to add the ability to add an animated title card.  See
+#   https://stackoverflow.com/questions/21493797/how-to-fade-two-images-with-ffmpeg
+#   My idea is to take an input of one or more images, turn them into a 1-2
+#   second title intro using ffmpeg and libass to render the text as specified
+#   by the user.  For its apparent complexity, I actually don't see this as a
+#   complex software problem with most of the heavy lifting done by ffmpeg
+#   and the usual scripting tools available.
+#
+# - Some transcripts have chapter titles!
+#   https://www.youtube.com/watch?v=YjrxHqNy5CQ
+#   Like to handle these as a simple top banner entry lasting for some word-
+#   count length of time.  Of course with a --no-chapter-titles option to
+#   disable this feature ...
+#
+# - TODO :: Ensure that all of the json regexps match with the output of (say)
+#   ‘--probe-only’ so that the user can reliably select a track by that search
+#   criteria.
+#
+# - fix the '&' character bug in the video's filename when there is a subtitle.
+#   '&'s are a problem in a subtitle file name -- just have to put it in the
+#   correct ESCAPE bucket (there are currently three) I think ...
+#   (REFER :: 'G_FFMPEG_SUBTITLE_FILENAME')
 #
 ###############################################################################
 #
@@ -276,7 +314,8 @@ trap 'exit_handler' EXIT ;
 # - jq          - used to parse mkvmerge's json output
 #                 developed and tested with version 1.6
 # - dos2unix    - ffmpeg builds a DOS file when converting SRT to ASS subtitles
-# - bash + type - unless you're going with a really old distro, the version of
+# - bash + type - Should be bash 4.3 or later.
+#                 Unless you're going with a really old distro, the version of
 #                 bash installed is probably modern enough for this script.
 #
 #                 The script does use the [[ ]] construct, so this script is
@@ -356,7 +395,7 @@ C_FFMPEG_CRF_DBG=24 ;            # Fast, used for batch script --debug testing
 C_FFMPEG_PRESET_DBG='superfast'; # Fast, used for batch script --debug testing
 
 C_FFMPEG_CRF_NOR=20 ;            # Good quality w/good compression
-C_FFMPEG_PRESET_NOR='veryslow' ; # Good quality w/good compression
+C_FFMPEG_PRESET_NOR='slow' ;     # Good quality w/good compression
 C_FFMPEG_MP3_BITS=320 ;         # We'll convert the audio track to MP3
 C_FFMPEG_PIXEL_FORMAT='yuvj420p'; # If it does NOT work, go back to 'yuv420p'.
                                 # https://news.ycombinator.com/item?id=20036710
@@ -421,6 +460,8 @@ G_OPTION_TRN_MARGIN=100 ;       # The default left and right text margin
 G_OPTION_TRN_MARGINV=12 ;       # The default vertical margin
 G_OPTION_TRN_TEXT_OFFSET_MS=0;  # subtitle text timing offset, --trn-delay-ms
 # TODO FIXME 'Open Sans Semibold' does not exist on blackshed, should print a warning
+
+G_FFMPEG_STREAM_MAPPINGS='' ;
 
   #############################################################################
   # https://www.alt-codes.net/music_note_alt_codes.php
@@ -519,6 +560,7 @@ C_SUBTITLE_IN_DIR='IN SUBs' ;   # location for manually added subtitles
 C_TRN_TAG_ASS_SCRIPT='#S' ;
 C_TRN_TAG_LANGUAGE='#L' ;       # O, Language tag for spell correction
 C_TRN_TAG_EMBEDDED_CLI='#C' ;
+C_TRN_TAG_SED_SNIPPET='#X' ;    # TODO :: sed snippets in the transcript file
 C_EMBEDDED_SUFFIX='.cli' ;
 #-- C_TRN_TAG_TITLE='#T ' ;     # Video's title if different than filename
 #-- C_TRN_TAG_CHANNEL='#U ' ;   # U-tube channel
@@ -694,9 +736,19 @@ check_max_video_width() {
     #
     # We'll only check the width - that should be enough.
     #
+    # HACK :: Some videos have a second "video" stream (according to ffmpeg)
+    #         which can be an embedded picture that is usually a PNG/JPG type.
+    #         This caused this logic to use the dimensions of this stream to
+    #         see if we need to add the 'scale=X' argument to ffmpeg.
+    #
+    #         The bugfix/hack is that now I __always__ assume the 1st stream
+    #         for making this test (via ‘head -1’); for now this s/b okay ...
+    #      :: ffmpeg (5.1.4) now adds a ',' after the WxH dimension ...
+    #
   local video_width="$("${G_FFMPEG_BIN}" ${G_FFMPEG_OPT} -i "${input_video}" 2>&1 \
         | "${GREP}" ${GREP_OPTS} 'Stream.*Video' \
-        | "${GREP}" ${GREP_OPTS} -o '[1-9][0-9]*x[1-9][0-9]* ' \
+        | head -1 \
+        | "${GREP}" ${GREP_OPTS} -o '[1-9][0-9]*x[1-9][0-9]*[,]* ' \
         | "${CUT}" -dx -f1)" ;
 
   G_STRING='' ;
@@ -1317,7 +1369,7 @@ select_subtitle_track_number() {
     ;;
 
   2) # An egrep regx
-    which_cmd='head -1' ; # WISH ... someday, configurable?
+    which_cmd='head -1' ; # TODO ... someday, configurable?
     track_found="$(${MKVMERGE} -i -F json "${in_video}" \
         | jq '.tracks[]' \
         | jq -r "[.id, .type, .properties.codec_id, \
@@ -1386,7 +1438,7 @@ select_subtitle_track_number() {
 
 
 ###############################################################################
-# probe_video(video_file)
+# Probe_video(video_file)
 #
 # Perform a probe of the video file tracks.  Typical output may look like -->
 #
@@ -1399,6 +1451,22 @@ select_subtitle_track_number() {
 #   - correct or desired subtitle __track__, and/or
 #   - desired audio __stream__.
 #   - (in the future?) desired video __track__.
+#
+# Of course ...
+# There's a difference in the order mkvmerge list a media's tracks and ffprobe.
+# This doesn't matter for subtitles or video because of the way they're handled
+# by this script.  But for audio, it can be confusing (and I don't know all of
+# the "rules" for this yet).
+#
+# For audio tracks, mkvmerge list the tracks in ‘track.id’ order; ffprobe (and
+# ffmpeg) seems to list the tracks using the ‘track.properties.sub_stream_id’,
+# or ‘track.properties.number’.  Even with that info, it's not clear to me
+# exactly how ffmpeg determines the stream order from the input file, or the
+# weight of “dispositions” such as ‘default’.
+#
+# This seems to be an issue in (obviously) videos with multiple audio tracks,
+# and older videos (greater than 10 years olde); it's actually pretty rare.
+# Most of the time, mkvmerge and ffmpeg/ffprobe agree on their track layouts.
 #
 probe_video() {
   local video_file="$1" ; shift ;
@@ -1415,8 +1483,8 @@ probe_video() {
       ${MKVMERGE} -i -F json "${video_file}" \
         | jq '.tracks[]'           \
         | jq -r "[.id, .type, .codec, .properties.codec_id, \
-                  .properties.audio_channels, \
-                  .properties.audio_bits_per_sample, \
+                  .properties.default_track, .properties.sub_stream_id, .properties.number, \
+                  .properties.audio_channels, .properties.audio_bits_per_sample, \
                   .properties.audio_sampling_frequency, \
                   .properties.track_name, .properties.language]|@sh" \
           | "${GREP}" ${GREP_OPTS} "'audio'" ; \
@@ -1513,11 +1581,13 @@ check_getopt() {
 
 ##?? G_OPTION_GLOBAL_MESSAGES='' ; # reset for each call to 'check_getopt()'
 
+  # For some reason, making this 'local' does NOT set $? for ‘getopt’. {
   HS_OPTIONS=`getopt -o dpt::h::vc:f:yq: \
       --long help::,verbose,config:,copy-to:,quality:,\
 dry-run,\
 debug,\
 no-subs,\
+no-subtitles,\
 no-comment,\
 no-metadata,\
 no-modify-srt,\
@@ -1556,7 +1626,7 @@ audio-stream::,\
 mono,\
 fonts-directory::,\
 font-check:: \
-    -n "${ATTR_ERROR} ${ATTR_BLUE_BOLD}${C_SCRIPT_NAME}${ATTR_YELLOW}" -- "$@"` ;
+    -n "${ATTR_ERROR} ${ATTR_BLUE_BOLD}${C_SCRIPT_NAME}${ATTR_YELLOW}" -- "$@"` ; # }
 
   if [ $? != 0 ] ; then
      my_usage 1 ;
@@ -1568,7 +1638,7 @@ font-check:: \
     --mono)
       G_OPTION_MONO=1 ; shift ;
       ;;
-    --no-subs)
+    --no-subs|--no-subtitles)
       G_OPTION_NO_SUBS='y' ; shift ;
       ;;
     --no-modify-srt)
@@ -1988,7 +2058,7 @@ check_embedded_options() {
       | "${SED}" -e "s/^${C_TRN_TAG_EMBEDDED_CLI}[ ]//" \
                  -e 's/[ \t][ \t]*#.*$//'               \
       | while read cli_line ; do  # {
- 
+
          cli_options="${cli_options} ${cli_line}" ;
 
          # QQQQ :: TODO :: check for other '#Options' here (e.g. #H) ..?
@@ -3323,8 +3393,7 @@ add_transcript_text_to_subtitle() {
   echo "     total lines = ${transcript_lineno}," ;
   echo "  recalculations = ${transcript_adjustments} (Dialogue: 'End' time)," ;
   echo "     blank lines = ${transcript_blank_lines}," ;
-  echo "          errors = ${transcript_errors}," ;
-  echo "    process time was " ;
+  echo "          errors = ${transcript_errors}." ;
 
   return ${rc} ;
 }
@@ -3615,8 +3684,14 @@ HERE_DOC
     { set +x ; } >/dev/null 2>&1
 
       #########################################################################
-      # Print out the processing time for __this__ transcript file
+      # Print out the processing time for __this__ transcript file using the
+      # built-in 'time' function.  Note the goofy way we have to build the
+      # 'TIMEFORMAT' format sting.  (Yeah, I DID try it as a single string but
+      # eiher the '\n' didn't expand or the '${ATTR_BLUE_BOLD}' didn't expand
+      # depending on the quotes used around the string (‘"’ or ‘'’).)
       #
+    TIMEFORMAT=$'\n  add_transcript_text_to_subtitle() process time was' ;
+    TIMEFORMAT="${TIMEFORMAT} ${ATTR_BLUE_BOLD}%3lR" ; # bash(1) manual page
     time { function_stats="$(add_transcript_text_to_subtitle \
                             "${transcript_file_in}"    \
                             "${transcript_language}"   \
@@ -3626,8 +3701,7 @@ HERE_DOC
                             "${dictionary_sed_script}" \
                             )"; RC=$? ; # Always SUCCESS
       printf '%s' "${function_stats}" ;
-      TIMEFORMAT="${ATTR_BLUE_BOLD}%3lR" ; # bash(1) manual page
-    }
+    } ;
     tput sgr0 ;
 
   done  # }
@@ -3712,10 +3786,161 @@ else
   check_installed_tools ; # Ensure we have all of the needed tools installed
 fi
 
+###############################################################################
+###############################################################################
+#     #                                                                  AUDIO
+#    # #    #    #  #####      #     ####
+#   #   #   #    #  #    #     #    #    #
+#  #     #  #    #  #    #     #    #    #
+#  #######  #    #  #    #     #    #    #
+#  #     #  #    #  #    #     #    #    #
+#  #     #   ####   #####      #     ####
+#
+##-- G_OPTION_SUBTITLE_TRACK='first' ; # This is the default subtitle track to burn
+##-- G_OPTION_SUBTITLE_TRACK_TYPE=0; # (tightly coupled w/G_OPTION_SUBTITLE_TRACK)
+##-- G_OPTION_SUBTITLE_TRACK_NUM=-1; # (tightly coupled w/G_OPTION_SUBTITLE_TRACK)
+##-- G_OPTION_SUBTITLE_TRACK_SET=0 ; # (tightly coupled w/G_OPTION_SUBTITLE_TRACK)
+##--    select_subtitle_track_number "${G_IN_VIDEO_FILE}"             \
+##--                                  ${G_OPTION_SUBTITLE_TRACK_TYPE} \
+##--                                 "${G_OPTION_SUBTITLE_TRACK}" ; rc=$? ;
+
+##-- G_OPTION_AUDIO_STREAM='first' ; # default audio stream to encode
+##-- G_OPTION_AUDIO_STREAM_TYPE=0 ;  # (tightly coupled w/G_OPTION_AUDIO_STREAM)
+##-- G_OPTION_AUDIO_STREAM_NUM=0 ;   # (tightly coupled w/G_OPTION_AUDIO_STREAM)
+##-- G_OPTION_AUDIO_STREAM_SET=0 ;   # (tightly coupled w/G_OPTION_AUDIO_STREAM)
+##--        -map 0:a:${AUDIO_FFMPEG_STREAM} "${WORKING_BASENAME}.mp4" ;
+##-- --audio-stream
+
+###############################################################################
+# Select_ffmpeg_audio_stream(
+# ret_ffmpeg_stream,
+# in_video,
+# track_type,
+# track_spec,
+# )
+#
+# There's about 4 different ways to return a string in bash using:
+#  - a subshell;
+#  - a GLOBAL;
+#  - eval; or
+#  - declare -n.
+#
+select_ffmpeg_audio_stream() {
+  ret_ffmpeg_stream="$1" ; shift ;
+  in_video="$1" ; shift ;
+  track_type=$1 ; shift ; # 0, 1, or 2
+  track_spec="$1" ; shift ;
+
+    ###########################################################################
+    # Build a list of all of the available audio tracks in the source video.
+    #
+    # Note, there's no guarantee that the audio tracks are sequential after
+    # the 1st audio track in the video (I've actually seen this in a video),
+    # so the track number doesn't correspond to the stream number of ffmpeg.
+    #
+    # We collect all of them together in a LINEAR array, then apply the user's
+    # stream selection rule/description to the group to get ffmpeg's stream #.
+    #
+    # We use the __same__ mkvmerge configuration as is used for the '--probe'
+    # CLI option so the user can build an appropriate regx pattern if desired.
+    #
+  unset audio_streams ; declare -a audio_streams=() ; # HHHH
+  ${MKVMERGE} -i -F json "${in_video}" \
+    | jq '.tracks[]'           \
+    | jq -r "[.id, .type, .codec, .properties.codec_id, \
+              .properties.number, \
+              .properties.audio_channels, \
+              .properties.audio_bits_per_sample, \
+              .properties.audio_sampling_frequency, \
+              .properties.track_name, .properties.language]|@sh" \
+    | "${GREP}" ${GREP_OPTS} "'audio'" \
+    | while read audio_track ; do  # {
+      audio_streams[${#audio_streams[@]}]="${audio_track}" ;
+    done  # }
+
+  audio_streams_cnt="${#audio_streams[@]}" ;
+
+    ###########################################################################
+    #
+  if [ ${audio_streams_cnt} -eq 0 ] ; then  # {
+      #########################################################################
+      # No audio track, let ffmpeg figure it out automatically ...
+      # TODO :: MESSAGE about NO audio stream
+      #
+    eval "${ret_ffmpeg_stream}=''" ;
+    return ;
+  fi  # }
+
+#HHHH okay to here?
+  local ffmpeg_stream_idx=-1 ;
+
+  case ${track_type} in  # {
+  0) # 'first' or 'last', 'auto-detect' is used internally to indicate a retry ...
+    :
+    ;;
+  1) # An integer stream # < 255 (hopefully!)
+    :
+    ;;
+  2) # An egrep regx
+    local idx=0 ;
+    while [ ${idx} -lt ${audio_streams_cnt} ] ; do  # {
+##--   XXXX="${audio_streams[${idx}]}"
+       printf '%s' "${audio_streams[${idx}]}" \
+         | "${GREP}" -E ${GREP_OPTS} -q "${track_spec}" ; rc=$? ;
+       if [ ${rc} -eq 0 ] ; then  # {
+       ffmpeg_stream_idx=${idx} ;
+       break ;
+       fi  # }
+       (( idx++ )) ;
+    done  # }
+
+      #########################################################################
+      # If we don't find the track specified by the user, let ffmpeg decide.
+      #
+    if [ ${ffmpeg_stream_idx} -eq -1 ] ; then  # {
+      # TODO :: MESSAGE about key NOT FOUND, using default audio stream
+      # MESSAGE about falling back to ffmpeg's default audio track
+      eval "${ret_ffmpeg_stream}=''" ;
+      return ;
+    else  # }{
+      # MESSAGE using this track from regx
+      :
+    fi  # }
+ 
+
+##- local audio_stream_track="$(printf '%s\n' "${audio_streams[@]}" \
+##-   | "${GREP}" -E ${GREP_OPTS} "${track_spec}")" ;
+##- if [ "${audio_stream_track}" = '' ] ; then  # {
+##-   # TODO :: MESSAGE about key NOT FOUND, using default audio stream
+##-   eval "${ret_ffmpeg_stream}=''" ;
+##-   return ;
+##- fi  # }
+    #audio_stream_idx="${audio_streams[${audio_stream_key}]}"
+    ;;
+  esac  # }
+
+  # SUCCESS !!! HERE HHHH  (should I try the ALAC special case?)
+  eval "${ret_ffmpeg_stream}='-map 0:v:0 -map 0:a:${ffmpeg_stream_idx}'" ;
+}
+
+
+if [ ${G_OPTION_AUDIO_STREAM_SET} -ne 0 ] ; then
+    select_ffmpeg_audio_stream 'G_FFMPEG_STREAM_MAPPINGS' \
+                               "${G_IN_VIDEO_FILE}"           \
+                                ${G_OPTION_AUDIO_STREAM_TYPE} \
+                               "${G_OPTION_AUDIO_STREAM}" \
+                               ;
+
+
+  printf '################### "%s"\n' "${G_FFMPEG_STREAM_MAPPINGS}" ;
+fi
+set +x ; ##-- DELETE
+##-- G_FFMPEG_STREAM_MAPPINGS='' ;
+
 
 ###############################################################################
 ###############################################################################
-#   #####
+#   #####                                                            SUBTITLEs
 #  #     #  #    #  ####   #####  #  #####  #      #####   ####
 #  #        #    #  #   #    #    #    #    #      #      #
 #   #####   #    #  ####     #    #    #    #      ####    ####
@@ -3780,7 +4005,8 @@ if [ "${G_OPTION_NO_SUBS}" != 'y' ] ; then  # {
     check_transcript_embedded_options "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}"*.txt ;
 
     C_SED_DICTIONARY_BASENAME="${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}" ;
-    convert_transcripts_to_ass "${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" \
+    convert_transcripts_to_ass 2>&1 \
+                               "${C_SUBTITLE_OUT_DIR}/${G_IN_BASENAME}.ass" \
                                "${G_TRN_SED_SCRIPT}"                        \
                                "${C_SED_DICTIONARY_BASENAME}"               \
                                "${C_SUBTITLE_IN_DIR}/${G_IN_BASENAME}"*.txt ;
@@ -4081,20 +4307,20 @@ else  # }{
     ###########################################################################
     # This works.  Is there a better, more concise way?  Dunno ...
     #
-    # There are THREE distinct character types that have to be escaped with a
+    # There are THREE distinct character types that need to be escaped with a
     # varying number of '\'s.  I'm actually amazed this all appears to produce
     # the desired results in ffmpeg, its metadata comments, and libass!
     #
     # TODO :: I don't know if there are more cases that need special handling.
     #
   G_FFMPEG_SUBTITLE_FILENAME="`echo "${G_SUBTITLE_PATHNAME}" \
-                | "${SED}" -e 's#\([ |()]\)#\\\\\\\\\\\\\1#g' \
-                           -e 's#\([][]\)#\\\\\\\\\\\\\\\\\1#g' \
-                           -e 's#\([:,\x27]\)#\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\1#g'`" ;
+      | "${SED}" -e 's#\([ |()]\)#\\\\\\\\\\\\\1#g' \
+                 -e 's#\([][]\)#\\\\\\\\\\\\\\\\\1#g' \
+                 -e 's#\([:,\x27]\)#\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\1#g'`" ;
   G_FFMPEG_FONTS_DIR="`echo "${G_FONTS_DIR}" \
-                | "${SED}" -e 's#\([ |()]\)#\\\\\\\\\\\\\1#g' \
-                           -e 's#\([][]\)#\\\\\\\\\\\\\\\\\1#g' \
-                           -e 's#\([:,\x27]\)#\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\1#g'`" ;
+      | "${SED}" -e 's#\([ |()]\)#\\\\\\\\\\\\\1#g' \
+                 -e 's#\([][]\)#\\\\\\\\\\\\\\\\\1#g' \
+                 -e 's#\([:,\x27]\)#\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\1#g'`" ;
 
   if [ "${C_VIDEO_PAD_FILTER_FIX}" = '' ] ; then  # {
     eval set -- "subtitles=${G_FFMPEG_SUBTITLE_FILENAME}:fontsdir=${G_FFMPEG_FONTS_DIR}" ;
@@ -4126,6 +4352,7 @@ fi
 
 ###############################################################################
 # This is where the hammer meets the road!
+# https://serverfault.com/questions/175376/redirect-output-of-time-command-in-unix-into-a-variable-in-bash
 #
 if [ ! -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" \
        -a "${G_OPTION_DRY_RUN}" = '' ] ; then  # {
@@ -4139,14 +4366,18 @@ if [ ! -s "${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" \
   if   [ "${G_OPTION_NO_COMMENT}" = 'y' ] \
     || [ "${G_OPTION_NO_METADATA}" = 'y' ] ; then  # {
 
-    set -x ; # We want to KEEP this enabled.
-    "${G_FFMPEG_BIN}" ${G_FFMPEG_OPT} -i "${G_IN_VIDEO_FILE}" \
+    { set +x ; } >/dev/null 2>&1
+    exec 3>&1 4>&2 ;
+    FFMPEG_RUN_TIME=$(TIMEFORMAT=$'time = %3lR' ;
+       { time "${G_FFMPEG_BIN}" ${G_FFMPEG_OPT} -i "${G_IN_VIDEO_FILE}" \
               -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} \
               -c:v libx264 -preset ${C_FFMPEG_PRESET} \
               -crf ${C_FFMPEG_CRF} \
               -tune ${G_OPTION_FFMPEG_TUNE} -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} \
               "$@" \
-              "file:${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ;
+              ${G_FFMPEG_STREAM_MAPPINGS} \
+              "file:${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" 1>&3 2>&4; } 2>&1 )
+    exec 3>&- 4>&- ; # FIXME :: where do I capture $? now?
     { RC=$? ; set +x ; } >/dev/null 2>&1
 
   else  # }{
@@ -4174,20 +4405,24 @@ HERE_DOC
       echo 'FIXME' ;
     fi  # }
 
-    set -x ; # We want to KEEP this enabled.
-    "${G_FFMPEG_BIN}" ${G_FFMPEG_OPT} -i "${G_IN_VIDEO_FILE}" \
+    { set +x ; } >/dev/null 2>&1
+    exec 3>&1 4>&2 ;
+    FFMPEG_RUN_TIME=$(TIMEFORMAT=$'time = %3lR' ;
+      { time "${G_FFMPEG_BIN}" ${G_FFMPEG_OPT} -i "${G_IN_VIDEO_FILE}" \
               -c:a libmp3lame -ab ${C_FFMPEG_MP3_BITS}K ${G_FFMPEG_AUDIO_CHANNELS} \
               -c:v libx264 -preset ${C_FFMPEG_PRESET} \
               -crf ${C_FFMPEG_CRF} \
               -tune ${G_OPTION_FFMPEG_TUNE} -profile:v high -level 4.1 -pix_fmt ${C_FFMPEG_PIXEL_FORMAT} \
               "$@" \
               -metadata "comment=${G_VIDEO_COMMENT}" \
-              "file:${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" ;
+              ${G_FFMPEG_STREAM_MAPPINGS} \
+              "file:${G_VIDEO_OUT_DIR}/${G_IN_BASENAME}.${C_OUTPUT_CONTAINER}" 1>&3 2>&4; } 2>&1 )
+    exec 3>&- 4>&- ; # FIXME :: where do I capture $? now?
     { RC=$? ; set +x ; } >/dev/null 2>&1
 
   fi  # }
 
-  run_desc="  ${ATTR_GREEN_BOLD}FFMPEG ENCODING COMPLETE" ;
+  run_desc="  ${ATTR_GREEN_BOLD}FFMPEG ENCODING COMPLETE, ${FFMPEG_RUN_TIME}" ;
   printf "${run_desc}${ATTR_CLR_BOLD} '%s' ...\n" "${G_IN_VIDEO_FILE}" ;
 
 else  # }{
